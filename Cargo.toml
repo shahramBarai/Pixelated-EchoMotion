@@ -1,0 +1,8 @@
+[package]
+name = "computational_art_and_design"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.93"
+opencv = "0.93.4"
