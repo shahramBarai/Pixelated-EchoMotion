@@ -2,7 +2,12 @@ mod frame_processing;
 
 use anyhow::Result; // Automatically handle the error types
 use frame_processing::{highlight_objects_with_contours, pixelate_frame};
-use opencv::{core::Scalar, highgui, prelude::*, videoio};
+use opencv::{
+    core::{self, Scalar},
+    highgui::{self, wait_key, WINDOW_NORMAL},
+    prelude::*,
+    videoio,
+};
 
 // Define the constants
 const PIXEL_SIZE: i32 = 5; // Define maximum possible pixel size
@@ -12,7 +17,7 @@ const WINDOW_NAME: &str = "Window"; // Define the name of the window
 const WINDOW_WIDTH: i32 = 960; // Define the width of the window
 const WINDOW_HEIGHT: i32 = 540; // Define the height of the window
 
-const VIDEO_DEVICE: i32 = 4; // Define the video device
+const VIDEO_DEVICE: i32 = 0; // Define the video device
 const VIDEO_RESOLUTION_WIDTH: i32 = 1920; // Define the width of the video resolution
 const VIDEO_RESOLUTION_HEIGHT: i32 = 1080; // Define the height of the video resolution
 
@@ -24,7 +29,7 @@ fn main() -> Result<()> {
     }
 
     // Open a GUI window and set the size of it
-    highgui::named_window(WINDOW_NAME, highgui::WINDOW_NORMAL)?;
+    highgui::named_window(WINDOW_NAME, WINDOW_NORMAL)?;
     highgui::resize_window(WINDOW_NAME, WINDOW_WIDTH, WINDOW_HEIGHT)?;
 
     let mut video = videoio::VideoCapture::default()?;
@@ -34,11 +39,13 @@ fn main() -> Result<()> {
         if !video.is_opened()? {
             panic!("Unable to open the webcam!");
         }
-        video.set(videoio::CAP_PROP_FRAME_WIDTH, VIDEO_RESOLUTION_WIDTH as f64)?;
-        video.set(
-            videoio::CAP_PROP_FRAME_HEIGHT,
-            VIDEO_RESOLUTION_HEIGHT as f64,
-        )?;
+        if VIDEO_DEVICE != 0 {
+            video.set(videoio::CAP_PROP_FRAME_WIDTH, VIDEO_RESOLUTION_WIDTH as f64)?;
+            video.set(
+                videoio::CAP_PROP_FRAME_HEIGHT,
+                VIDEO_RESOLUTION_HEIGHT as f64,
+            )?;
+        }
     } else if args[1] == "file" && args.len() == 3 {
         let file_path = &args[2];
         // Check if the file exists
@@ -58,12 +65,40 @@ fn main() -> Result<()> {
     let mut processed_frame =
         Mat::new_size_with_default(frame.size()?, frame.typ(), Scalar::all(255.0))?;
 
+    let mut pre_processed_frame =
+        Mat::new_size_with_default(frame.size()?, frame.typ(), Scalar::all(255.0))?;
+
+    // let mut lower_threshold: i32 = 120;
+    // let mut upper_threshold: i32 = 300;
+
+    // highgui::create_trackbar(
+    //     "Lower Threshold",
+    //     WINDOW_NAME,
+    //     Some(&mut lower_threshold),
+    //     255,
+    //     None,
+    // )?;
+    // highgui::create_trackbar(
+    //     "Upper Threshold",
+    //     WINDOW_NAME,
+    //     Some(&mut upper_threshold),
+    //     1000,
+    //     None,
+    // )?;
+
+    let mut object_pixels: Vec<(core::Point, core::Scalar)> = Vec::new();
+
     loop {
         video.read(&mut frame)?;
         if frame.empty() {
             println!("End of stream");
             break; // End of stream
         }
+
+        // Set the output frame to white before drawing the pixelated image
+        processed_frame.set_to(&core::Scalar::all(255.0), &core::no_array())?;
+        // Set the output frame to green before drawing the pixelated image
+        pre_processed_frame.set_to(&core::Scalar::new(0.0, 255.0, 0.0, 0.0), &core::no_array())?;
 
         // Pixelate the frame
         pixelate_frame(
@@ -75,17 +110,26 @@ fn main() -> Result<()> {
         )?;
 
         // Highlight objects with contours
-        highlight_objects_with_contours(&frame, &mut processed_frame, 1, 60 as f64, 200 as f64)?;
+        // highlight_objects_with_contours(&frame, &mut processed_frame)?;
+
+        // Extract the object from the frame
+        object_pixels = frame_processing::extract_object(&processed_frame, 200 as f64)?;
+
+        // Draw the object pixels on the processed frame
+        for (point, color) in object_pixels.iter() {
+            *pre_processed_frame.at_2d_mut::<core::Vec3b>(point.y, point.x)? =
+                core::Vec3b::from([color[0] as u8, color[1] as u8, color[2] as u8]);
+        }
 
         // Display the frame_show in the window
-        highgui::imshow(WINDOW_NAME, &processed_frame)?;
+        highgui::imshow(WINDOW_NAME, &pre_processed_frame)?;
 
         // Break the loop when the user presses the 'q'
-        let key = highgui::wait_key(1)?;
-        if key == 113 {
+        if wait_key(1)? == 113 {
             println!("Exit");
             break;
         }
+        //std::thread::sleep(std::time::Duration::from_millis(500));
     }
     Ok(())
 }
