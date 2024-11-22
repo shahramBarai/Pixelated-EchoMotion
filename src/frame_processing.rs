@@ -8,9 +8,6 @@ pub fn pixelate_frame(
     spacing: i32,
     adjust_size_based_on_brightness: bool,
 ) -> Result<()> {
-    // Set the output frame to white before drawing the pixelated image
-    output.set_to(&core::Scalar::all(255.0), &core::no_array())?;
-
     let mut y = 0;
     while y <= input.rows() {
         let mut x = 0;
@@ -58,28 +55,55 @@ pub fn highlight_objects_with_contours(
     } else if filter_option == 1 {
         canny_operator(input_frame, &mut edges, lower_threshold, upper_threshold)?;
     } else if filter_option == 2 {
-        scharr_operator(input_frame, &mut edges)?;
+        scharr_operator(input_frame, &mut edges, lower_threshold, upper_threshold)?;
     }
 
+    // Find contours
     let mut contours = core::Vector::<core::Vector<core::Point>>::new();
-    let hierarchy = Mat::default();
     imgproc::find_contours(
         &edges,
         &mut contours,
-        imgproc::RETR_TREE,
+        imgproc::RETR_EXTERNAL,
         imgproc::CHAIN_APPROX_SIMPLE,
         core::Point::new(0, 0),
     )?;
 
     for i in 0..contours.len() {
+        let color = core::Scalar::new(0.0, 255.0, 0.0, 0.0); // Green color
         imgproc::draw_contours(
             output_frame,
             &contours,
             i as i32,
-            core::Scalar::new(0.0, 255.0, 0.0, 0.0), // Green color
+            color,
             2,
             imgproc::LINE_AA,
-            &hierarchy,
+            &core::no_array(),
+            0,
+            core::Point::new(0, 0),
+        )?;
+    }
+
+    // Select the largest contour
+    if let Some(largest_contour) = contours
+        .iter()
+        .max_by_key(|contour| imgproc::contour_area(&contour, false).unwrap_or(0.0) as i32)
+    {
+        let mut approx = core::Vector::<core::Point>::new();
+        let epsilon = 0.001 * imgproc::arc_length(&largest_contour, true)?; // Adjust epsilon for contour precision
+        imgproc::approx_poly_dp(&largest_contour, &mut approx, epsilon, true)?;
+
+        // Wrap the single contour in a Vector
+        let approx_contours = core::Vector::<core::Vector<core::Point>>::from(vec![approx]);
+
+        // Draw the single outline on the output frame
+        imgproc::draw_contours(
+            output_frame,
+            &approx_contours,
+            -1,
+            core::Scalar::new(0.0, 0.0, 255.0, 0.0), // Red color
+            2,
+            imgproc::LINE_AA,
+            &core::no_array(),
             0,
             core::Point::new(0, 0),
         )?;
@@ -87,7 +111,12 @@ pub fn highlight_objects_with_contours(
     Ok(())
 }
 
-fn scharr_operator(frame: &Mat, edges: &mut Mat) -> Result<()> {
+fn scharr_operator(
+    frame: &Mat,
+    edges: &mut Mat,
+    lower_threshold: f64,
+    upper_threshold: f64,
+) -> Result<()> {
     let mut gray = Mat::default();
     imgproc::cvt_color(frame, &mut gray, imgproc::COLOR_BGR2GRAY, 0)?;
 
@@ -105,8 +134,8 @@ fn scharr_operator(frame: &Mat, edges: &mut Mat) -> Result<()> {
     imgproc::threshold(
         &blurred,
         &mut thresholded,
-        100.0, // Example lower threshold
-        255.0, // Example upper threshold
+        lower_threshold,
+        upper_threshold,
         imgproc::THRESH_BINARY,
     )?;
 
