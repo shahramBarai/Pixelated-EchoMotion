@@ -14,6 +14,7 @@ pub struct Particle {
     y: f64,
     vx: f64,
     vy: f64,
+    pub on_position: bool,
 }
 
 impl Particle {
@@ -27,6 +28,7 @@ impl Particle {
             y: origin.y as f64,
             vx: 0.0,
             vy: 0.0,
+            on_position: true,
         }
     }
 
@@ -42,7 +44,7 @@ impl Particle {
         Ok(())
     }
 
-    pub fn update(&mut self, mouse_coords: Point) {
+    pub fn update(&mut self, mouse_coords: Point, mouse_radius: f64) {
         // Influence by mouse
         let dx = mouse_coords.x as f64 - self.x;
         let dy = mouse_coords.y as f64 - self.y;
@@ -51,10 +53,10 @@ impl Particle {
         if distance == 0.0 {
             force = 0.0;
         } else {
-            force = -5000.0 / distance;
+            force = -mouse_radius / distance;
         }
 
-        if distance < 5000.0 {
+        if distance < mouse_radius {
             let angel = dy.atan2(dx) as f64;
             self.vx += force * angel.cos() as f64;
             self.vy += force * angel.sin() as f64;
@@ -71,6 +73,9 @@ impl Particle {
         {
             self.x = self.origin.x as f64;
             self.y = self.origin.y as f64;
+            self.on_position = true;
+        } else {
+            self.on_position = false;
         }
 
         if self.x < 0.0 {
@@ -95,6 +100,8 @@ pub struct Effect {
     pub brightness_threshold: f64,
     particles: Vec<Particle>,
     pub mouse_coords: Point,
+    mouse_radius: f64,
+    animation: bool,
 }
 
 impl Effect {
@@ -106,10 +113,15 @@ impl Effect {
             brightness_threshold: 200.0,
             particles: Vec::new(),
             mouse_coords: Point::new(0, 0),
+            mouse_radius: 40000.0,
+            animation: false,
         }
     }
 
     pub fn init(&mut self, input_frame: &Mat) -> Result<()> {
+        // Clear the particles array
+        self.particles.clear();
+
         // Convert the input frame to grayscale
         let mut gray = Mat::default();
         imgproc::cvt_color(input_frame, &mut gray, imgproc::COLOR_BGR2GRAY, 0)?;
@@ -141,6 +153,8 @@ impl Effect {
             }
             y += self.pixel_size + self.pixel_spacing;
         }
+        println!("Particles: {}", self.particles.len());
+        self.animation = true;
         Ok(())
     }
 
@@ -152,8 +166,17 @@ impl Effect {
     }
 
     pub fn update(&mut self) {
+        let mut all_on_position = true;
         for particle in &mut self.particles {
-            particle.update(self.mouse_coords);
+            particle.update(self.mouse_coords, self.mouse_radius);
+            if all_on_position && !particle.on_position {
+                all_on_position = false;
+            }
         }
+        self.animation = !all_on_position;
+    }
+
+    pub fn get_animation_status(&self) -> bool {
+        self.animation
     }
 }

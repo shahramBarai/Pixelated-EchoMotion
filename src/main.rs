@@ -4,7 +4,9 @@ mod particle_system;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result; // Automatically handle the error types
-use frame_processing::{detect_interference_near_point, pixelate_frame};
+use frame_processing::{
+    detect_interference_near_point, highlight_objects_with_contours, pixelate_frame,
+};
 use particle_system::Effect;
 
 use opencv::{
@@ -15,7 +17,7 @@ use opencv::{
 };
 
 // Define the constants
-const PIXEL_SIZE: i32 = 1; // Define maximum possible pixel size
+const PIXEL_SIZE: i32 = 2; // Define maximum possible pixel size
 const PIXEL_SPACING: i32 = 0; // Define the spacing between pixels
 
 const WINDOW_NAME: &str = "Window"; // Define the name of the window
@@ -87,9 +89,6 @@ fn main() -> Result<()> {
     highgui::set_mouse_callback(WINDOW_NAME, Some(callback))?;
 
     let mut effect = Effect::new(WINDOW_WIDTH, WINDOW_HEIGHT, PIXEL_SIZE, PIXEL_SPACING);
-    effect.init(&frame)?;
-
-    let mut start_animation = false;
 
     loop {
         // Set the output frame to white before drawing the pixelated image
@@ -99,15 +98,15 @@ fn main() -> Result<()> {
         {
             let coords = mouse_coords.lock().unwrap();
             effect.mouse_coords = *coords;
-            if (detect_interference_near_point(&frame, *coords, 10)?) {
-                println!("Interference detected!");
-                start_animation = true;
-            } else {
-                start_animation = false;
+            if !effect.get_animation_status()
+                && detect_interference_near_point(&frame, *coords, 10)?
+            {
+                effect.init(&frame)?;
+                println!("Interference detected");
             }
         }
 
-        if start_animation {
+        if effect.get_animation_status() {
             effect.update();
             effect.draw(&mut processed_frame)?;
         } else {
@@ -118,10 +117,7 @@ fn main() -> Result<()> {
             }
         }
 
-        // Set the output frame to green before drawing the pixelated image
-        //pre_processed_frame.set_to(&core::Scalar::new(0.0, 255.0, 0.0, 0.0), &core::no_array())?;
-
-        // Pixelate the frame
+        // // Pixelate the frame
         // pixelate_frame(
         //     &frame,
         //     &mut processed_frame,
@@ -130,20 +126,11 @@ fn main() -> Result<()> {
         //     false,
         // )?;
 
-        // Highlight objects with contours
+        // // Highlight objects with contours
         // highlight_objects_with_contours(&frame, &mut processed_frame)?;
 
-        // Extract the object from the frame
-        // object_pixels = frame_processing::extract_object(&processed_frame, PIXEL_SIZE, 200 as f64)?;
-
-        // // Draw the object pixels on the processed frame
-        // for (point, color) in object_pixels.iter() {
-        //     *pre_processed_frame.at_2d_mut::<core::Vec3b>(point.y, point.x)? =
-        //         core::Vec3b::from([color[0] as u8, color[1] as u8, color[2] as u8]);
-        // }
-
         // Display the frame_show in the window
-        if start_animation {
+        if effect.get_animation_status() {
             highgui::imshow(WINDOW_NAME, &processed_frame)?;
         } else {
             highgui::imshow(WINDOW_NAME, &frame)?;
