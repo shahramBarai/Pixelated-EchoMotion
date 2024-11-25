@@ -1,16 +1,21 @@
 mod frame_processing;
+mod particle_system;
+
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result; // Automatically handle the error types
-use frame_processing::{highlight_objects_with_contours, pixelate_frame};
+use frame_processing::{detect_interference_near_point, pixelate_frame};
+use particle_system::Effect;
+
 use opencv::{
-    core::{self, Scalar},
+    core::{self, Point, Scalar},
     highgui::{self, wait_key, WINDOW_NORMAL},
     prelude::*,
     videoio,
 };
 
 // Define the constants
-const PIXEL_SIZE: i32 = 5; // Define maximum possible pixel size
+const PIXEL_SIZE: i32 = 1; // Define maximum possible pixel size
 const PIXEL_SPACING: i32 = 0; // Define the spacing between pixels
 
 const WINDOW_NAME: &str = "Window"; // Define the name of the window
@@ -33,7 +38,6 @@ fn main() -> Result<()> {
     highgui::resize_window(WINDOW_NAME, WINDOW_WIDTH, WINDOW_HEIGHT)?;
 
     let mut video = videoio::VideoCapture::default()?;
-
     if args[1] == "webcam" {
         video.open(VIDEO_DEVICE, videoio::CAP_ANY)?;
         if !video.is_opened()? {
@@ -65,71 +69,92 @@ fn main() -> Result<()> {
     let mut processed_frame =
         Mat::new_size_with_default(frame.size()?, frame.typ(), Scalar::all(255.0))?;
 
-    let mut pre_processed_frame =
-        Mat::new_size_with_default(frame.size()?, frame.typ(), Scalar::all(255.0))?;
+    let mouse_coords = Arc::new(Mutex::new(Point::new(0, 0)));
 
-    // let mut lower_threshold: i32 = 120;
-    // let mut upper_threshold: i32 = 300;
+    // Clone the Arc for the callback
+    let mouse_coords_callback = Arc::clone(&mouse_coords);
 
-    // highgui::create_trackbar(
-    //     "Lower Threshold",
-    //     WINDOW_NAME,
-    //     Some(&mut lower_threshold),
-    //     255,
-    //     None,
-    // )?;
-    // highgui::create_trackbar(
-    //     "Upper Threshold",
-    //     WINDOW_NAME,
-    //     Some(&mut upper_threshold),
-    //     1000,
-    //     None,
-    // )?;
+    // Define the callback function
+    let callback = Box::new(move |event: i32, x: i32, y: i32, _: i32| {
+        if event == highgui::EVENT_MOUSEMOVE || event == highgui::EVENT_LBUTTONDOWN {
+            let mut coords = mouse_coords_callback.lock().unwrap();
+            coords.x = x;
+            coords.y = y;
+        }
+    });
 
-    let mut object_pixels: Vec<(core::Point, core::Scalar)> = Vec::new();
+    // Set the mouse callback for the window
+    highgui::set_mouse_callback(WINDOW_NAME, Some(callback))?;
+
+    let mut effect = Effect::new(WINDOW_WIDTH, WINDOW_HEIGHT, PIXEL_SIZE, PIXEL_SPACING);
+    effect.init(&frame)?;
+
+    let mut start_animation = false;
 
     loop {
-        video.read(&mut frame)?;
-        if frame.empty() {
-            println!("End of stream");
-            break; // End of stream
-        }
-
         // Set the output frame to white before drawing the pixelated image
         processed_frame.set_to(&core::Scalar::all(255.0), &core::no_array())?;
+
+        // Get the latest mouse coordinates
+        {
+            let coords = mouse_coords.lock().unwrap();
+            effect.mouse_coords = *coords;
+            if (detect_interference_near_point(&frame, *coords, 10)?) {
+                println!("Interference detected!");
+                start_animation = true;
+            } else {
+                start_animation = false;
+            }
+        }
+
+        if start_animation {
+            effect.update();
+            effect.draw(&mut processed_frame)?;
+        } else {
+            video.read(&mut frame)?;
+            if frame.empty() {
+                println!("End of stream");
+                break; // End of stream
+            }
+        }
+
         // Set the output frame to green before drawing the pixelated image
-        pre_processed_frame.set_to(&core::Scalar::new(0.0, 255.0, 0.0, 0.0), &core::no_array())?;
+        //pre_processed_frame.set_to(&core::Scalar::new(0.0, 255.0, 0.0, 0.0), &core::no_array())?;
 
         // Pixelate the frame
-        pixelate_frame(
-            &frame,
-            &mut processed_frame,
-            PIXEL_SIZE,
-            PIXEL_SPACING,
-            false,
-        )?;
+        // pixelate_frame(
+        //     &frame,
+        //     &mut processed_frame,
+        //     PIXEL_SIZE,
+        //     PIXEL_SPACING,
+        //     false,
+        // )?;
 
         // Highlight objects with contours
         // highlight_objects_with_contours(&frame, &mut processed_frame)?;
 
         // Extract the object from the frame
-        object_pixels = frame_processing::extract_object(&processed_frame, 200 as f64)?;
+        // object_pixels = frame_processing::extract_object(&processed_frame, PIXEL_SIZE, 200 as f64)?;
 
-        // Draw the object pixels on the processed frame
-        for (point, color) in object_pixels.iter() {
-            *pre_processed_frame.at_2d_mut::<core::Vec3b>(point.y, point.x)? =
-                core::Vec3b::from([color[0] as u8, color[1] as u8, color[2] as u8]);
-        }
+        // // Draw the object pixels on the processed frame
+        // for (point, color) in object_pixels.iter() {
+        //     *pre_processed_frame.at_2d_mut::<core::Vec3b>(point.y, point.x)? =
+        //         core::Vec3b::from([color[0] as u8, color[1] as u8, color[2] as u8]);
+        // }
 
         // Display the frame_show in the window
-        highgui::imshow(WINDOW_NAME, &pre_processed_frame)?;
+        if start_animation {
+            highgui::imshow(WINDOW_NAME, &processed_frame)?;
+        } else {
+            highgui::imshow(WINDOW_NAME, &frame)?;
+        }
 
         // Break the loop when the user presses the 'q'
         if wait_key(1)? == 113 {
             println!("Exit");
             break;
         }
-        //std::thread::sleep(std::time::Duration::from_millis(500));
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
     Ok(())
 }

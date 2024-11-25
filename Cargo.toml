@@ -6,3 +6,4 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.93"
 opencv = "0.93.4"
+rand = "0.8.5"
