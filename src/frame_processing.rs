@@ -13,10 +13,6 @@ pub fn pixelate_frame(
     adjust_size_based_on_brightness: bool,
 ) -> Result<()> {
     let mut y = 0;
-    println!("input.rows() = {}", input.rows());
-    println!("input.cols() = {}", input.cols());
-    println!("y = {}", input.rows() / pixel_size);
-    println!("x = {}", input.cols() / pixel_size);
     while y <= input.rows() {
         let mut x = 0;
         while x <= input.cols() {
@@ -119,36 +115,36 @@ pub fn highlight_objects_with_contours(input_frame: &Mat, output_frame: &mut Mat
     Ok(())
 }
 
-pub fn extract_object(
+pub fn detect_interference_near_point(
     input_frame: &Mat,
-    brightness_threshold: f64,
-) -> Result<Vec<(Point, Scalar)>> {
+    object: Point,
+    distance: i32,
+) -> Result<bool> {
     // Convert the input frame to grayscale
     let mut gray = Mat::default();
     imgproc::cvt_color(input_frame, &mut gray, imgproc::COLOR_BGR2GRAY, 0)?;
 
     // Create a binary image by thresholding the grayscale image
     let mut mask = Mat::default();
-    imgproc::threshold(
-        &gray,
-        &mut mask,
-        brightness_threshold,
-        255.0,
-        imgproc::THRESH_BINARY,
-    )?;
+    imgproc::threshold(&gray, &mut mask, 200.0, 255.0, imgproc::THRESH_BINARY)?;
 
-    // Extract coordinates and pixel values of the object
-    let mut object_pixels = Vec::new();
-    for y in 0..mask.rows() {
-        for x in 0..mask.cols() {
-            if *mask.at_2d::<u8>(y, x)? == 0 {
-                let color = input_frame.at_2d::<core::Vec3b>(y, x)?;
-                object_pixels.push((
-                    Point::new(x, y),
-                    Scalar::new(color[0] as f64, color[1] as f64, color[2] as f64, 0.0),
-                ));
-            }
-        }
+    // Check if the object is within the interference region
+    let mut y = object.y - distance;
+    if y < 0 {
+        y = 0;
     }
-    Ok(object_pixels)
+    while y < object.y + distance && y < mask.rows() {
+        let mut x = object.x - distance;
+        if x < 0 {
+            x = 0;
+        }
+        while x < object.x + distance && x < mask.cols() {
+            if *mask.at_2d::<u8>(y, x)? == 0 {
+                return Ok(true);
+            }
+            x += 1;
+        }
+        y += 1;
+    }
+    Ok(false)
 }
