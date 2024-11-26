@@ -9,7 +9,8 @@ use video_capture::VideoSource;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result; // Automatically handle the error types
-use frame_processing::{detect_interference_near_point, pixelate_frame};
+use frame_processing::detect_interference_near_point; // Import the detect_interference_near_point function
+use frame_processing::pixelate_frame; // Import the pixelate_frame function
 use particle_system::{particle_system::EffectType, Effect};
 
 use opencv::{
@@ -19,7 +20,7 @@ use opencv::{
 };
 
 // Define the constants
-const PIXEL_SIZE: i32 = 2; // Define maximum possible pixel size
+const PIXEL_SIZE: i32 = 5; // Define maximum possible pixel size
 const PIXEL_SPACING: i32 = 0; // Define the spacing between pixels
 const WINDOW_NAME: &str = "Window"; // Define the name of the window
 const WINDOW_WIDTH: i32 = 960; // Define the width of the window
@@ -28,7 +29,8 @@ const VIDEO_RESOLUTION_WIDTH: i32 = 1920; // Define the width of the video resol
 const VIDEO_RESOLUTION_HEIGHT: i32 = 1080; // Define the height of the video resolution
 const OBJECTS_INTERFERENCE_DISTANCE: i32 = 3000; // Define the distance to detect interference
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         println!("Usage: {} [webcam|file <video_path>]", args[0]);
@@ -55,7 +57,7 @@ fn main() -> Result<()> {
         PIXEL_SPACING,
         OBJECTS_INTERFERENCE_DISTANCE,
     );
-    effect.set_effect_type(EffectType::Explosion);
+    effect.set_effect_type(EffectType::Push);
 
     loop {
         // Set the output frame to white before drawing the pixelated image
@@ -90,8 +92,8 @@ fn main() -> Result<()> {
                 &mut output_frame,
                 PIXEL_SIZE,
                 PIXEL_SPACING,
-                false,
-            )?;
+            )
+            .await?;
         }
 
         // Show the output frame in the window

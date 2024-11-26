@@ -1,47 +1,67 @@
+use std::sync::{Arc, Mutex};
+
 use anyhow::Result;
 use opencv::{
-    core::{self, Point, Scalar},
+    core::{self, Point, Rect, Size, VecN},
     imgproc,
     prelude::*,
 };
 
-pub fn pixelate_frame(
+use tokio::task;
+
+pub async fn pixelate_frame(
     input: &Mat,
     output: &mut Mat,
     pixel_size: i32,
     spacing: i32,
-    adjust_size_based_on_brightness: bool,
 ) -> Result<()> {
-    let mut y = 0;
-    while y <= input.rows() {
-        let mut x = 0;
-        while x <= input.cols() {
-            if x + pixel_size <= input.cols() && y + pixel_size <= input.rows() {
-                // Calculate average color within the circle's region
-                let mut rect = core::Rect::new(x, y, pixel_size, pixel_size);
+    let rows = input.rows();
+    let cols = input.cols();
+    let rows_per_pixel = (rows + pixel_size - 1) / pixel_size;
+    let num_cpus = num_cpus::get() as i32;
+    let chunk_size = (rows_per_pixel + num_cpus - 1) / num_cpus;
 
-                // Get the sub-matrix of the input frame
-                let sub_mat = Mat::roi(input, rect)?;
-                let avg_color = core::mean(&sub_mat, &core::no_array())?;
+    // Vector to hold all async tasks
+    let mut tasks = Vec::new();
 
-                if adjust_size_based_on_brightness {
-                    // Map brightness to size
-                    let brightness = (avg_color[0] + avg_color[1] + avg_color[2]) as i32 / 3;
-                    let mapped_size = 1 + ((255 - brightness) * (pixel_size - 1)) / 255;
-                    let center = mapped_size / 2;
-                    rect.x = x - center;
-                    rect.y = y - center;
-                    rect.width = mapped_size;
-                    rect.height = mapped_size;
+    let mut chunk_y = 0;
+    while chunk_y < chunk_size {
+        let input_clone = input.clone(); // Clone input matrix for each task
+
+        // Spawn async task for this chunk
+        tasks.push(task::spawn(async move {
+            let mut rectangles: Vec<(Rect, VecN<f64, 4>)> = Vec::new();
+            let mut y = 0;
+            while y < rows && y + pixel_size <= rows {
+                let mut x = 0;
+                while x < cols && x + pixel_size <= cols {
+                    // Calculate average color within the circle's region
+                    let rect = Rect::new(x, y, pixel_size, pixel_size);
+
+                    // Get the sub-matrix of the input frame
+                    let sub_mat = Mat::roi(&input_clone, rect)?;
+                    let avg_color = core::mean(&sub_mat, &core::no_array())?;
+
+                    rectangles.push((rect, avg_color));
+
+                    x += pixel_size + spacing;
                 }
-
-                // Draw filled rectangle with the average color
-                imgproc::rectangle(output, rect, avg_color, -1, imgproc::LINE_AA, 0)?;
+                y += pixel_size + spacing;
             }
-            x += pixel_size + spacing;
-        }
-        y += pixel_size + spacing;
+            Ok::<Vec<(Rect, VecN<f64, 4>)>, anyhow::Error>(rectangles)
+        }));
+        chunk_y += 1;
     }
+
+    // Wait for all async tasks to complete and process the results
+    for task in tasks {
+        let rectangles = task.await??;
+        for (rect, avg_color) in rectangles {
+            // Draw the pixelated rectangle on the output frame
+            imgproc::rectangle(output, rect, avg_color, -1, imgproc::LINE_8, 0)?;
+        }
+    }
+
     Ok(())
 }
 
