@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Result; // Automatically handle the error types
 use frame_processing::{detect_interference_near_point, pixelate_frame};
-use particle_system::Effect;
+use particle_system::{particle_system::EffectType, Effect};
 
 use opencv::{
     core::{self, Point},
@@ -24,6 +24,8 @@ const PIXEL_SPACING: i32 = 0; // Define the spacing between pixels
 const WINDOW_NAME: &str = "Window"; // Define the name of the window
 const WINDOW_WIDTH: i32 = 960; // Define the width of the window
 const WINDOW_HEIGHT: i32 = 540; // Define the height of the window
+const VIDEO_RESOLUTION_WIDTH: i32 = 1920; // Define the width of the video resolution
+const VIDEO_RESOLUTION_HEIGHT: i32 = 1080; // Define the height of the video resolution
 const OBJECTS_INTERFERENCE_DISTANCE: i32 = 3000; // Define the distance to detect interference
 
 fn main() -> Result<()> {
@@ -34,15 +36,8 @@ fn main() -> Result<()> {
     }
 
     // Initialize the video source
-    let mut videio_source = VideoSource::new(&args)?;
-
-    let mut effect = Effect::new(
-        WINDOW_WIDTH,
-        WINDOW_HEIGHT,
-        PIXEL_SIZE,
-        PIXEL_SPACING,
-        OBJECTS_INTERFERENCE_DISTANCE,
-    );
+    let mut videio_source =
+        VideoSource::new(&args, VIDEO_RESOLUTION_WIDTH, VIDEO_RESOLUTION_HEIGHT)?;
 
     // Initialize gui window and handle mouse events
     let window = Window::new(WINDOW_NAME, WINDOW_WIDTH, WINDOW_HEIGHT)?;
@@ -52,6 +47,15 @@ fn main() -> Result<()> {
     // Create a frame to display the output
     videio_source.update_frame()?;
     let mut output_frame = videio_source.frame.clone();
+
+    // Initialize the particle system effect
+    let mut effect = Effect::new(
+        videio_source.frame.size()?,
+        PIXEL_SIZE,
+        PIXEL_SPACING,
+        OBJECTS_INTERFERENCE_DISTANCE,
+    );
+    effect.set_effect_type(EffectType::Explosion);
 
     loop {
         // Set the output frame to white before drawing the pixelated image

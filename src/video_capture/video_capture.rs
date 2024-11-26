@@ -4,30 +4,21 @@ use opencv::{
     videoio::{self, VideoCapture},
 };
 
-const VIDEO_DEVICE: i32 = 0; // Define the video device
-const VIDEO_RESOLUTION_WIDTH: i32 = 1920; // Define the width of the video resolution
-const VIDEO_RESOLUTION_HEIGHT: i32 = 1080; // Define the height of the video resolution
-
 pub struct VideoSource {
     capture: VideoCapture,
     pub frame: Mat,
 }
 
 impl VideoSource {
-    pub fn new(args: &[String]) -> Result<Self> {
+    pub fn new(args: &[String], resolution_width: i32, resolution_height: i32) -> Result<Self> {
         let mut capture = VideoCapture::default()?;
+        let mut webcam_index = 0;
 
-        if args[1] == "webcam" {
-            capture.open(VIDEO_DEVICE, videoio::CAP_ANY)?;
+        if args[1] == "webcam" && args.len() == 3 {
+            webcam_index = args[2].parse::<i32>()?;
+            capture.open(webcam_index, videoio::CAP_ANY)?;
             if !capture.is_opened()? {
                 bail!("Unable to open the webcam!");
-            }
-            if VIDEO_DEVICE != 0 {
-                capture.set(videoio::CAP_PROP_FRAME_WIDTH, VIDEO_RESOLUTION_WIDTH as f64)?;
-                capture.set(
-                    videoio::CAP_PROP_FRAME_HEIGHT,
-                    VIDEO_RESOLUTION_HEIGHT as f64,
-                )?;
             }
         } else if args[1] == "file" && args.len() == 3 {
             let file_path = &args[2];
@@ -39,7 +30,12 @@ impl VideoSource {
                 bail!("Unable to open video file: {}", file_path);
             }
         } else {
-            bail!("Invalid arguments! Use 'webcam' or 'file <video_path>'.");
+            bail!("Invalid arguments! Use 'webcam <webcam_index>' or 'file <video_path>'.");
+        }
+
+        if args[1] == "file" || webcam_index != 0 {
+            capture.set(videoio::CAP_PROP_FRAME_WIDTH, resolution_width as f64)?;
+            capture.set(videoio::CAP_PROP_FRAME_HEIGHT, resolution_height as f64)?;
         }
 
         Ok(Self {

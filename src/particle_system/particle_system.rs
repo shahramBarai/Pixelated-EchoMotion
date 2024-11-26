@@ -1,12 +1,14 @@
 use anyhow::Result; // Automatically handle the error types
 use opencv::{
-    core::{self, Point, Rect, Scalar},
+    core::{self, Point, Rect, Scalar, Size},
     imgproc,
     prelude::*,
 };
 
+use rand::Rng;
+
 pub struct Particle {
-    window_size: Point,
+    window_size: Size,
     origin: Point,
     size: i32,
     color: core::Scalar,
@@ -18,7 +20,7 @@ pub struct Particle {
 }
 
 impl Particle {
-    pub fn new(window_size: Point, origin: Point, size: i32, color: core::Scalar) -> Self {
+    pub fn new(window_size: Size, origin: Point, size: i32, color: core::Scalar) -> Self {
         Particle {
             window_size,
             origin,
@@ -28,7 +30,7 @@ impl Particle {
             y: origin.y as f64,
             vx: 0.0,
             vy: 0.0,
-            on_position: true,
+            on_position: false,
         }
     }
 
@@ -44,7 +46,20 @@ impl Particle {
         Ok(())
     }
 
-    pub fn update(&mut self, mouse_coords: Point, mouse_radius: f64) {
+    pub fn update_with_effect(
+        &mut self,
+        effect_type: &EffectType,
+        mouse_coords: Point,
+        mouse_radius: f64,
+    ) {
+        match effect_type {
+            EffectType::Push => self.update_push(mouse_coords, mouse_radius),
+            EffectType::Break => self.update_break(),
+            EffectType::Explosion => self.update_explosion(mouse_coords),
+        }
+    }
+
+    fn update_push(&mut self, mouse_coords: Point, mouse_radius: f64) {
         // Influence by mouse
         let dx = mouse_coords.x as f64 - self.x;
         let dy = mouse_coords.y as f64 - self.y;
@@ -57,14 +72,45 @@ impl Particle {
         }
 
         if distance < mouse_radius {
-            let angel = dy.atan2(dx) as f64;
-            self.vx += force * angel.cos() as f64;
-            self.vy += force * angel.sin() as f64;
+            let angel = dy.atan2(dx);
+            self.vx += force * angel.cos();
+            self.vy += force * angel.sin();
         }
 
         self.vx *= 0.80;
         self.vy *= 0.80;
 
+        self.check_world_boundaries();
+        self.move_towards_origin();
+    }
+
+    fn update_break(&mut self) {
+        self.vy += 0.5; // Simulate gravity by incrementing vertical velocity
+        self.vy *= 0.98; // Apply slight vertical damping
+        self.y += self.vy;
+
+        if self.y > self.window_size.height as f64 {
+            self.y = self.window_size.height as f64; // Stop particles at the bottom
+            self.vy = 0.0;
+        }
+    }
+
+    fn update_explosion(&mut self, explosion_center: Point) {
+        let dx = self.x - explosion_center.x as f64;
+        let dy = self.y - explosion_center.y as f64;
+        let distance = (dx * dx + dy * dy).sqrt().max(1.0); // Avoid division by zero
+        let force = 10.0 / distance; // Arbitrary explosion force
+
+        self.vx += force * dx / distance;
+        self.vy += force * dy / distance;
+
+        self.vx *= 0.98; // Apply damping
+        self.vy *= 0.98; // Apply damping
+        self.x += self.vx;
+        self.y += self.vy;
+    }
+
+    fn move_towards_origin(&mut self) {
         self.x += (self.origin.x as f64 - self.x) * 0.05 + self.vx;
         self.y += (self.origin.y as f64 - self.y) * 0.05 + self.vy;
 
@@ -77,43 +123,47 @@ impl Particle {
         } else {
             self.on_position = false;
         }
+    }
 
+    fn check_world_boundaries(&mut self) {
         if self.x < 0.0 {
             self.x = 0.0;
         }
         if self.y < 0.0 {
             self.y = 0.0;
         }
-        if self.x > self.window_size.x as f64 {
-            self.x = self.window_size.x as f64;
+        if self.x > self.window_size.width as f64 {
+            self.x = self.window_size.width as f64;
         }
-        if self.y > self.window_size.y as f64 {
-            self.y = self.window_size.y as f64;
+        if self.y > self.window_size.height as f64 {
+            self.y = self.window_size.height as f64;
         }
     }
 }
 
 pub struct Effect {
-    pub window_size: Point,
-    pub pixel_size: i32,
-    pub pixel_spacing: i32,
-    pub brightness_threshold: f64,
+    window_size: Size,
+    pixel_size: i32,
+    pixel_spacing: i32,
+    brightness_threshold: f64,
     particles: Vec<Particle>,
     pub mouse_coords: Point,
     mouse_radius: f64,
     animation: bool,
+    effect_type: EffectType,
+}
+
+// Enum to represent different effects
+pub enum EffectType {
+    Push,      // Existing push-around-mouse effect
+    Break,     // Particles fall down
+    Explosion, // Particles explode away from a point
 }
 
 impl Effect {
-    pub fn new(
-        window_width: i32,
-        window_height: i32,
-        pixel_size: i32,
-        pixel_spacing: i32,
-        mouse_radius: i32,
-    ) -> Self {
+    pub fn new(window_size: Size, pixel_size: i32, pixel_spacing: i32, mouse_radius: i32) -> Self {
         Effect {
-            window_size: Point::new(window_width, window_height),
+            window_size,
             pixel_size,
             pixel_spacing,
             brightness_threshold: 200.0,
@@ -121,6 +171,7 @@ impl Effect {
             mouse_coords: Point::new(0, 0),
             mouse_radius: mouse_radius as f64,
             animation: false,
+            effect_type: EffectType::Push,
         }
     }
 
@@ -171,15 +222,19 @@ impl Effect {
         Ok(())
     }
 
+    pub fn set_effect_type(&mut self, effect_type: EffectType) {
+        self.effect_type = effect_type;
+    }
+
     pub fn update(&mut self) {
         let mut all_on_position = true;
         for particle in &mut self.particles {
-            particle.update(self.mouse_coords, self.mouse_radius);
+            particle.update_with_effect(&self.effect_type, self.mouse_coords, self.mouse_radius);
             if all_on_position && !particle.on_position {
                 all_on_position = false;
             }
         }
-        self.animation = !all_on_position;
+        self.animation = true;
     }
 
     pub fn get_animation_status(&self) -> bool {
