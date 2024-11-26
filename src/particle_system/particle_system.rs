@@ -105,7 +105,13 @@ pub struct Effect {
 }
 
 impl Effect {
-    pub fn new(window_width: i32, window_height: i32, pixel_size: i32, pixel_spacing: i32) -> Self {
+    pub fn new(
+        window_width: i32,
+        window_height: i32,
+        pixel_size: i32,
+        pixel_spacing: i32,
+        mouse_radius: i32,
+    ) -> Self {
         Effect {
             window_size: Point::new(window_width, window_height),
             pixel_size,
@@ -113,7 +119,7 @@ impl Effect {
             brightness_threshold: 200.0,
             particles: Vec::new(),
             mouse_coords: Point::new(0, 0),
-            mouse_radius: 40000.0,
+            mouse_radius: mouse_radius as f64,
             animation: false,
         }
     }
