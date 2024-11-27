@@ -17,22 +17,29 @@ pub async fn pixelate_frame(
 ) -> Result<()> {
     let rows = input.rows();
     let cols = input.cols();
-    let rows_per_pixel = (rows + pixel_size - 1) / pixel_size;
     let num_cpus = num_cpus::get() as i32;
-    let chunk_size = (rows_per_pixel + num_cpus - 1) / num_cpus;
+    let pixels_per_row = rows / pixel_size;
+    let chunk_size = ((pixels_per_row + num_cpus - 1) / num_cpus) as i32 * pixel_size;
 
     // Vector to hold all async tasks
     let mut tasks = Vec::new();
 
-    let mut chunk_y = 0;
-    while chunk_y < chunk_size {
+    let mut i = 1;
+    let mut chunk_start = 0;
+    while chunk_start < rows {
         let input_clone = input.clone(); // Clone input matrix for each task
+        let chunk_end = (chunk_start + chunk_size).min(rows);
 
+        println!(
+            "{}: Processing chunk: {} - {} ({})",
+            i, chunk_start, chunk_end, chunk_size
+        );
+        i += 1;
         // Spawn async task for this chunk
         tasks.push(task::spawn(async move {
             let mut rectangles: Vec<(Rect, VecN<f64, 4>)> = Vec::new();
-            let mut y = 0;
-            while y < rows && y + pixel_size <= rows {
+            let mut y = chunk_start;
+            while y < chunk_end && y + pixel_size <= rows {
                 let mut x = 0;
                 while x < cols && x + pixel_size <= cols {
                     // Calculate average color within the circle's region
@@ -50,7 +57,7 @@ pub async fn pixelate_frame(
             }
             Ok::<Vec<(Rect, VecN<f64, 4>)>, anyhow::Error>(rectangles)
         }));
-        chunk_y += 1;
+        chunk_start = chunk_end;
     }
 
     // Wait for all async tasks to complete and process the results

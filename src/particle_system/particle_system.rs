@@ -234,7 +234,7 @@ impl Effect {
                 all_on_position = false;
             }
         }
-        self.animation = true;
+        self.animation = !all_on_position;
     }
 
     pub fn get_animation_status(&self) -> bool {
