@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use opencv::{
-    core::{self, Point, Rect, Size, VecN},
+    core::{self, no_array, Point, Rect, Size, VecN, Vector},
     imgproc,
     prelude::*,
 };
@@ -72,106 +72,157 @@ pub async fn pixelate_frame(
     Ok(())
 }
 
-pub fn highlight_objects_with_contours(input_frame: &Mat, output_frame: &mut Mat) -> Result<()> {
-    let mut edges = Mat::default();
-
+fn get_object_contour(input_frame: &Mat) -> Result<Vector<Vector<Point>>> {
     // Apply the canny algorithm to detect edges (steps: grayscale, blur, canny)
     let mut gray = Mat::default();
     imgproc::cvt_color(input_frame, &mut gray, imgproc::COLOR_BGR2GRAY, 0)?;
-    let mut blurred = Mat::default();
-    imgproc::gaussian_blur(
-        &gray,
-        &mut blurred,
-        core::Size::new(5, 5),
-        0.0,
-        0.0,
-        core::BORDER_DEFAULT,
-    )?;
-    imgproc::canny(&blurred, &mut edges, 120.0, 255.0, 3, false)?;
+    let mut mask = Mat::default();
+    imgproc::threshold(&gray, &mut mask, 200.0, 255.0, imgproc::THRESH_BINARY)?;
+    let mut inverted_mask = Mat::default();
+    core::bitwise_not(&mask, &mut inverted_mask, &no_array())?;
 
     // Find contours
-    let mut contours = core::Vector::<core::Vector<core::Point>>::new();
+    let mut contours = Vector::<Vector<Point>>::new();
     imgproc::find_contours(
-        &edges,
+        &inverted_mask,
         &mut contours,
         imgproc::RETR_EXTERNAL,
         imgproc::CHAIN_APPROX_SIMPLE,
-        core::Point::new(0, 0),
+        Point::new(0, 0),
     )?;
 
-    for i in 0..contours.len() {
-        let color = core::Scalar::new(0.0, 255.0, 0.0, 0.0); // Green color
-        imgproc::draw_contours(
-            output_frame,
-            &contours,
-            i as i32,
-            color,
-            2,
-            imgproc::LINE_AA,
-            &core::no_array(),
-            0,
-            core::Point::new(0, 0),
-        )?;
+    if !contours.is_empty() {
+        // Select the largest contour
+        let largest_contour = contours
+            .iter()
+            .max_by_key(|contour| imgproc::contour_area(&contour, false).unwrap_or(0.0) as i32)
+            .unwrap();
+
+        return Ok(Vector::<Vector<Point>>::from(vec![largest_contour]));
     }
 
-    // Select the largest contour
-    if let Some(largest_contour) = contours
-        .iter()
-        .max_by_key(|contour| imgproc::contour_area(&contour, false).unwrap_or(0.0) as i32)
-    {
-        let mut approx = core::Vector::<core::Point>::new();
-        let epsilon = 0.001 * imgproc::arc_length(&largest_contour, true)?; // Adjust epsilon for contour precision
-        imgproc::approx_poly_dp(&largest_contour, &mut approx, epsilon, true)?;
-
-        // Wrap the single contour in a Vector
-        let approx_contours = core::Vector::<core::Vector<core::Point>>::from(vec![approx]);
-
-        // Draw the single outline on the output frame
-        imgproc::draw_contours(
-            output_frame,
-            &approx_contours,
-            -1,
-            core::Scalar::new(0.0, 0.0, 255.0, 0.0), // Red color
-            2,
-            imgproc::LINE_AA,
-            &core::no_array(),
-            0,
-            core::Point::new(0, 0),
-        )?;
-    }
-    Ok(())
+    return Ok(Vector::<Vector<Point>>::new());
 }
 
-pub fn detect_interference_near_point(
-    input_frame: &Mat,
-    object: Point,
-    distance: i32,
-) -> Result<bool> {
-    // Convert the input frame to grayscale
-    let mut gray = Mat::default();
-    imgproc::cvt_color(input_frame, &mut gray, imgproc::COLOR_BGR2GRAY, 0)?;
+fn get_two_closest_points(
+    frame_1: &Mat,
+    frame_2: &Mat,
+    output: &mut Mat,
+) -> Result<(Point, Point)> {
+    // Get the object contour from the two frames
+    let contour_1 = get_object_contour(frame_1)?;
+    let contour_2 = get_object_contour(frame_2)?;
 
-    // Create a binary image by thresholding the grayscale image
-    let mut mask = Mat::default();
-    imgproc::threshold(&gray, &mut mask, 200.0, 255.0, imgproc::THRESH_BINARY)?;
-
-    // Check if the object is within the interference region
-    let mut y = object.y - distance;
-    if y < 0 {
-        y = 0;
+    if !contour_1.is_empty() {
+        imgproc::draw_contours(
+            output,
+            &contour_1,
+            -1,
+            core::Scalar::new(0.0, 0.0, 0.0, 0.0),
+            2,
+            imgproc::LINE_AA,
+            &no_array(),
+            0,
+            Point::new(0, 0),
+        )?;
     }
-    while y < object.y + distance && y < mask.rows() {
-        let mut x = object.x - distance;
-        if x < 0 {
-            x = 0;
-        }
-        while x < object.x + distance && x < mask.cols() {
-            if *mask.at_2d::<u8>(y, x)? == 0 {
-                return Ok(true);
+
+    if !contour_2.is_empty() {
+        imgproc::draw_contours(
+            output,
+            &contour_2,
+            -1,
+            core::Scalar::new(0.0, 0.0, 0.0, 0.0),
+            2,
+            imgproc::LINE_AA,
+            &no_array(),
+            0,
+            Point::new(0, 0),
+        )?;
+    }
+
+    // Initialize variables to find the closest points
+    let mut min_distance = f64::MAX;
+    let mut closest_point_1 = Point::new(0, 0);
+    let mut closest_point_2 = Point::new(0, 0);
+
+    // Compare all points from contours_1 with all points from contours_2
+    for contour_1 in contour_1.iter() {
+        for point_1 in contour_1.iter() {
+            for contour_2 in contour_2.iter() {
+                for point_2 in contour_2.iter() {
+                    let dx = (point_1.x - point_2.x) as f64;
+                    let dy = (point_1.y - point_2.y) as f64;
+                    let distance = (dx * dx + dy * dy).sqrt();
+
+                    if distance < min_distance {
+                        min_distance = distance;
+                        closest_point_1 = point_1;
+                        closest_point_2 = point_2;
+                    }
+                }
             }
-            x += 1;
         }
-        y += 1;
     }
+
+    Ok((closest_point_1, closest_point_2))
+}
+
+pub fn detect_interference(
+    frame_1: &Mat,
+    frame_2: &Mat,
+    output: &mut Mat,
+    min_distance: i32,
+) -> Result<bool> {
+    let (point_1, point_2) = get_two_closest_points(frame_1, frame_2, output)?;
+
+    let dx = (point_1.x - point_2.x) as f64;
+    let dy = (point_1.y - point_2.y) as f64;
+    let distance = (dx * dx + dy * dy).sqrt() as i32;
+
+    // Draw points and a line between the two closest points
+    imgproc::circle(
+        output,
+        point_1,
+        5,
+        core::Scalar::new(0.0, 0.0, 255.0, 0.0),
+        -1,
+        imgproc::LINE_AA,
+        0,
+    )?;
+    imgproc::circle(
+        output,
+        point_2,
+        5,
+        core::Scalar::new(0.0, 0.0, 255.0, 0.0),
+        -1,
+        imgproc::LINE_AA,
+        0,
+    )?;
+
+    println!("Distance: {}", distance);
+
+    if distance < min_distance {
+        imgproc::line(
+            output,
+            point_1,
+            point_2,
+            core::Scalar::new(0.0, 0.0, 255.0, 0.0),
+            2,
+            imgproc::LINE_AA,
+            0,
+        )?;
+        return Ok(true);
+    }
+    imgproc::line(
+        output,
+        point_1,
+        point_2,
+        core::Scalar::new(255.0, 0.0, 0.0, 0.0),
+        2,
+        imgproc::LINE_AA,
+        0,
+    )?;
+
     Ok(false)
 }
