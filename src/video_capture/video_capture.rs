@@ -10,38 +10,38 @@ pub struct VideoSource {
 }
 
 impl VideoSource {
-    pub fn new(args: &[String], resolution_width: i32, resolution_height: i32) -> Result<Self> {
-        let mut capture = VideoCapture::default()?;
-        let mut webcam_index = 0;
-
-        if args[1] == "webcam" && args.len() == 3 {
-            webcam_index = args[2].parse::<i32>()?;
-            capture.open(webcam_index, videoio::CAP_ANY)?;
-            if !capture.is_opened()? {
-                bail!("Unable to open the webcam!");
-            }
-        } else if args[1] == "file" && args.len() == 3 {
-            let file_path = &args[2];
-            if !std::path::Path::new(file_path).exists() {
-                bail!("File does not exist: {}", file_path);
-            }
-            capture.open_file(file_path, videoio::CAP_ANY)?;
-            if !capture.is_opened()? {
-                bail!("Unable to open video file: {}", file_path);
-            }
-        } else {
-            bail!("Invalid arguments! Use 'webcam <webcam_index>' or 'file <video_path>'.");
-        }
-
-        if args[1] == "file" || webcam_index != 0 {
-            capture.set(videoio::CAP_PROP_FRAME_WIDTH, resolution_width as f64)?;
-            capture.set(videoio::CAP_PROP_FRAME_HEIGHT, resolution_height as f64)?;
-        }
-
+    pub fn new() -> Result<Self> {
         Ok(Self {
-            capture,
+            capture: VideoCapture::default()?,
             frame: Mat::default(),
         })
+    }
+
+    pub fn set_source_file(&mut self, file_path: &String) -> Result<()> {
+        if !std::path::Path::new(file_path).exists() {
+            bail!("File does not exist: {}", file_path);
+        }
+        self.capture.open_file(file_path, videoio::CAP_ANY)?;
+        if !self.capture.is_opened()? {
+            bail!("Unable to open video file: {}", file_path);
+        }
+        Ok(())
+    }
+
+    pub fn set_source_webcam(&mut self, webcam_index: i32) -> Result<()> {
+        self.capture.open(webcam_index, videoio::CAP_ANY)?;
+        if !self.capture.is_opened()? {
+            bail!("Unable to open the webcam!");
+        }
+        Ok(())
+    }
+
+    pub fn set_resolution(&mut self, width: i32, height: i32) -> Result<()> {
+        self.capture
+            .set(videoio::CAP_PROP_FRAME_WIDTH, width as f64)?;
+        self.capture
+            .set(videoio::CAP_PROP_FRAME_HEIGHT, height as f64)?;
+        Ok(())
     }
 
     pub fn update_frame(&mut self) -> Result<()> {
