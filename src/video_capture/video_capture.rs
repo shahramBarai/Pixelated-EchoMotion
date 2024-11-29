@@ -44,11 +44,11 @@ impl VideoSource {
         Ok(())
     }
 
-    pub fn update_frame(&mut self) -> Result<()> {
+    pub fn update_frame(&mut self) -> Result<bool> {
         self.capture.read(&mut self.frame)?;
         if self.frame.empty() {
-            bail!("End of video stream!");
+            return Ok(false);
         }
-        Ok(())
+        Ok(true)
     }
 }
