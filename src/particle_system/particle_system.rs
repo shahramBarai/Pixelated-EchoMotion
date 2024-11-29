@@ -7,7 +7,14 @@ use opencv::{
 
 use rand::Rng;
 
-pub struct Particle {
+// Enum to represent different effects
+pub enum EffectType {
+    Push,      // Existing push-around-mouse effect
+    Break,     // Particles fall down
+    Explosion, // Particles explode away from a point
+}
+
+struct Particle {
     window_size: Size,
     origin: Point,
     size: i32,
@@ -141,103 +148,125 @@ impl Particle {
     }
 }
 
-pub struct Effect {
+pub struct ParticleSystem {
     window_size: Size,
+    particle_system: Vec<Vec<Particle>>,
     pixel_size: i32,
     pixel_spacing: i32,
-    brightness_threshold: f64,
-    particles: Vec<Particle>,
-    pub mouse_coords: Point,
+    animation_statuses: Vec<bool>,
     mouse_radius: f64,
-    animation: bool,
-    effect_type: EffectType,
+    effect_types: Vec<EffectType>,
+    pub output_frame: Mat,
 }
 
-// Enum to represent different effects
-pub enum EffectType {
-    Push,      // Existing push-around-mouse effect
-    Break,     // Particles fall down
-    Explosion, // Particles explode away from a point
-}
-
-impl Effect {
+impl ParticleSystem {
     pub fn new(window_size: Size, pixel_size: i32, pixel_spacing: i32, mouse_radius: i32) -> Self {
-        Effect {
+        ParticleSystem {
             window_size,
+            particle_system: Vec::new(),
             pixel_size,
             pixel_spacing,
-            brightness_threshold: 200.0,
-            particles: Vec::new(),
-            mouse_coords: Point::new(0, 0),
+            animation_statuses: Vec::new(),
             mouse_radius: mouse_radius as f64,
-            animation: false,
-            effect_type: EffectType::Push,
+            effect_types: Vec::new(),
+            output_frame: Mat::default(),
         }
     }
 
-    pub fn init(&mut self, input_frame: &Mat) -> Result<()> {
-        // Clear the particles array
-        self.particles.clear();
+    pub fn init(&mut self, frame: &Mat, amount: i32) -> Result<()> {
+        self.particle_system.clear();
+        self.animation_statuses.clear();
+        self.effect_types.clear();
 
-        // Convert the input frame to grayscale
-        let mut gray = Mat::default();
-        imgproc::cvt_color(input_frame, &mut gray, imgproc::COLOR_BGR2GRAY, 0)?;
+        for i in 0..amount {
+            self.particle_system.push(Vec::new());
+            self.animation_statuses.push(false);
+            self.effect_types.push(EffectType::Push);
+        }
 
-        // Create a binary image by thresholding the grayscale image
-        let mut mask = Mat::default();
-        imgproc::threshold(
-            &gray,
-            &mut mask,
-            self.brightness_threshold,
-            255.0,
-            imgproc::THRESH_BINARY,
-        )?;
+        self.output_frame = frame.clone();
 
-        let mut y = 0;
-        while y < mask.rows() {
-            let mut x = 0;
-            while x < mask.cols() {
-                if *mask.at_2d::<u8>(y, x)? == 0 {
-                    let color = input_frame.at_2d::<core::Vec3b>(y, x)?;
-                    self.particles.push(Particle::new(
-                        self.window_size,
-                        Point::new(x, y),
-                        self.pixel_size,
-                        Scalar::new(color[0] as f64, color[1] as f64, color[2] as f64, 0.0),
-                    ));
+        Ok(())
+    }
+
+    fn get_pixel_color(&self, frame: &Mat, point: &Point) -> Result<Scalar> {
+        // TODO: Remove this after demo
+        if true {
+            let color = frame.at_2d::<core::Vec3b>(point.y, point.x)?;
+            return Ok(Scalar::new(
+                color[0] as f64,
+                color[1] as f64,
+                color[2] as f64,
+                0.0,
+            ));
+        }
+
+        if point.x < 0
+            || point.y < 0
+            || point.x + self.pixel_size > frame.cols()
+            || point.y + self.pixel_size > frame.rows()
+        {
+            return Ok(Scalar::new(0.0, 0.0, 0.0, 0.0));
+        }
+        // Calculate average color within the circle's region
+        let rect = Rect::new(point.x, point.y, self.pixel_size, self.pixel_size);
+
+        // Get the sub-matrix of the input frame
+        let sub_mat = Mat::roi(frame, rect)?;
+        let avg_color = core::mean(&sub_mat, &core::no_array())?;
+
+        Ok(Scalar::new(avg_color[0], avg_color[1], avg_color[2], 0.0))
+    }
+
+    pub fn add_oject(&mut self, frame: &Mat, object: &Vec<Point>, index: usize) -> Result<()> {
+        let mut particles = Vec::new();
+        for point in object {
+            particles.push(Particle::new(
+                self.window_size,
+                *point,
+                self.pixel_size,
+                self.get_pixel_color(frame, point)?,
+            ));
+        }
+        self.particle_system[index] = particles;
+        self.animation_statuses[index] = true;
+
+        Ok(())
+    }
+
+    pub fn update(&mut self, mouse_coords: Point) -> Result<()> {
+        let i = 0;
+        for particles in &mut self.particle_system {
+            let mut all_on_position = true;
+            for particle in particles {
+                particle.update_with_effect(&self.effect_types[i], mouse_coords, self.mouse_radius);
+                if all_on_position && !particle.on_position {
+                    all_on_position = false;
                 }
-                x += self.pixel_size + self.pixel_spacing;
             }
-            y += self.pixel_size + self.pixel_spacing;
+            self.animation_statuses[i] = !all_on_position;
         }
-        println!("Particles: {}", self.particles.len());
-        self.animation = true;
+
         Ok(())
     }
 
-    pub fn draw(&self, frame: &mut Mat) -> Result<()> {
-        for particle in &self.particles {
-            particle.draw(frame)?;
+    pub fn clean_output_frame(&mut self) -> Result<()> {
+        self.output_frame
+            .set_to(&core::Scalar::all(255.0), &core::no_array())?;
+        Ok(())
+    }
+
+    pub fn draw(&mut self) -> Result<()> {
+        // Draw the particles
+        for particles in &self.particle_system {
+            for particle in particles {
+                particle.draw(&mut self.output_frame)?;
+            }
         }
         Ok(())
     }
 
-    pub fn set_effect_type(&mut self, effect_type: EffectType) {
-        self.effect_type = effect_type;
-    }
-
-    pub fn update(&mut self) {
-        let mut all_on_position = true;
-        for particle in &mut self.particles {
-            particle.update_with_effect(&self.effect_type, self.mouse_coords, self.mouse_radius);
-            if all_on_position && !particle.on_position {
-                all_on_position = false;
-            }
-        }
-        self.animation = !all_on_position;
-    }
-
-    pub fn get_animation_status(&self) -> bool {
-        self.animation
+    pub fn get_animation_status(&self, index: usize) -> Result<bool> {
+        Ok(self.animation_statuses[index])
     }
 }
