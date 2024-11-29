@@ -1,8 +1,6 @@
-use std::sync::{Arc, Mutex};
-
-use anyhow::Result;
+use anyhow::{Ok, Result};
 use opencv::{
-    core::{self, no_array, Point, Rect, Size, VecN, Vector},
+    core::{self, no_array, Point, Rect, Scalar, VecN, Vector},
     imgproc,
     prelude::*,
 };
@@ -55,7 +53,7 @@ pub async fn pixelate_frame(
                 }
                 y += pixel_size + spacing;
             }
-            Ok::<Vec<(Rect, VecN<f64, 4>)>, anyhow::Error>(rectangles)
+            Ok(rectangles)
         }));
         chunk_start = chunk_end;
     }
@@ -72,157 +70,136 @@ pub async fn pixelate_frame(
     Ok(())
 }
 
-fn get_object_contour(input_frame: &Mat) -> Result<Vector<Vector<Point>>> {
-    // Apply the canny algorithm to detect edges (steps: grayscale, blur, canny)
-    let mut gray = Mat::default();
-    imgproc::cvt_color(input_frame, &mut gray, imgproc::COLOR_BGR2GRAY, 0)?;
-    let mut mask = Mat::default();
-    imgproc::threshold(&gray, &mut mask, 200.0, 255.0, imgproc::THRESH_BINARY)?;
-    let mut inverted_mask = Mat::default();
-    core::bitwise_not(&mask, &mut inverted_mask, &no_array())?;
-
-    // Find contours
-    let mut contours = Vector::<Vector<Point>>::new();
-    imgproc::find_contours(
-        &inverted_mask,
-        &mut contours,
-        imgproc::RETR_EXTERNAL,
-        imgproc::CHAIN_APPROX_SIMPLE,
-        Point::new(0, 0),
-    )?;
-
-    if !contours.is_empty() {
-        // Select the largest contour
-        let largest_contour = contours
-            .iter()
-            .max_by_key(|contour| imgproc::contour_area(&contour, false).unwrap_or(0.0) as i32)
-            .unwrap();
-
-        return Ok(Vector::<Vector<Point>>::from(vec![largest_contour]));
-    }
-
-    return Ok(Vector::<Vector<Point>>::new());
+pub struct FrameProcessor {
+    masks: Vec<Mat>,
+    contours: Vec<Vector<Point>>,
+    grayscale_threshold: f64,
+    pixel_size: i32,
+    spacing: i32,
 }
 
-fn get_two_closest_points(
-    frame_1: &Mat,
-    frame_2: &Mat,
-    output: &mut Mat,
-) -> Result<(Point, Point)> {
-    // Get the object contour from the two frames
-    let contour_1 = get_object_contour(frame_1)?;
-    let contour_2 = get_object_contour(frame_2)?;
-
-    if !contour_1.is_empty() {
-        imgproc::draw_contours(
-            output,
-            &contour_1,
-            -1,
-            core::Scalar::new(0.0, 0.0, 0.0, 0.0),
-            2,
-            imgproc::LINE_AA,
-            &no_array(),
-            0,
-            Point::new(0, 0),
-        )?;
-    }
-
-    if !contour_2.is_empty() {
-        imgproc::draw_contours(
-            output,
-            &contour_2,
-            -1,
-            core::Scalar::new(0.0, 0.0, 0.0, 0.0),
-            2,
-            imgproc::LINE_AA,
-            &no_array(),
-            0,
-            Point::new(0, 0),
-        )?;
-    }
-
-    // Initialize variables to find the closest points
-    let mut min_distance = f64::MAX;
-    let mut closest_point_1 = Point::new(0, 0);
-    let mut closest_point_2 = Point::new(0, 0);
-
-    // Compare all points from contours_1 with all points from contours_2
-    for contour_1 in contour_1.iter() {
-        for point_1 in contour_1.iter() {
-            for contour_2 in contour_2.iter() {
-                for point_2 in contour_2.iter() {
-                    let dx = (point_1.x - point_2.x) as f64;
-                    let dy = (point_1.y - point_2.y) as f64;
-                    let distance = (dx * dx + dy * dy).sqrt();
-
-                    if distance < min_distance {
-                        min_distance = distance;
-                        closest_point_1 = point_1;
-                        closest_point_2 = point_2;
-                    }
-                }
-            }
+impl FrameProcessor {
+    pub fn new(pixel_size: i32, spacing: i32, grayscale_threshold: f64) -> Self {
+        Self {
+            masks: Vec::new(),
+            contours: Vec::<Vector<Point>>::new(),
+            grayscale_threshold,
+            pixel_size,
+            spacing,
         }
     }
 
-    Ok((closest_point_1, closest_point_2))
-}
+    pub fn init(&mut self, frames_amount: i32) {
+        self.masks.clear();
+        self.contours.clear();
 
-pub fn detect_interference(
-    frame_1: &Mat,
-    frame_2: &Mat,
-    output: &mut Mat,
-    min_distance: i32,
-) -> Result<bool> {
-    let (point_1, point_2) = get_two_closest_points(frame_1, frame_2, output)?;
-
-    let dx = (point_1.x - point_2.x) as f64;
-    let dy = (point_1.y - point_2.y) as f64;
-    let distance = (dx * dx + dy * dy).sqrt() as i32;
-
-    // Draw points and a line between the two closest points
-    imgproc::circle(
-        output,
-        point_1,
-        5,
-        core::Scalar::new(0.0, 0.0, 255.0, 0.0),
-        -1,
-        imgproc::LINE_AA,
-        0,
-    )?;
-    imgproc::circle(
-        output,
-        point_2,
-        5,
-        core::Scalar::new(0.0, 0.0, 255.0, 0.0),
-        -1,
-        imgproc::LINE_AA,
-        0,
-    )?;
-
-    println!("Distance: {}", distance);
-
-    if distance < min_distance {
-        imgproc::line(
-            output,
-            point_1,
-            point_2,
-            core::Scalar::new(0.0, 0.0, 255.0, 0.0),
-            2,
-            imgproc::LINE_AA,
-            0,
-        )?;
-        return Ok(true);
+        for _ in 0..frames_amount {
+            self.masks.push(Mat::default());
+            self.contours.push(Vector::<Point>::new());
+        }
     }
-    imgproc::line(
-        output,
-        point_1,
-        point_2,
-        core::Scalar::new(255.0, 0.0, 0.0, 0.0),
-        2,
-        imgproc::LINE_AA,
-        0,
-    )?;
 
-    Ok(false)
+    pub fn convert_to_grayscale(&mut self, frame: &Mat, index: usize) -> Result<()> {
+        let mut gray = Mat::default();
+        imgproc::cvt_color(frame, &mut gray, imgproc::COLOR_BGR2GRAY, 0)?;
+        imgproc::threshold(
+            &gray,
+            &mut self.masks[index],
+            self.grayscale_threshold,
+            255.0,
+            imgproc::THRESH_BINARY,
+        )?;
+        Ok(())
+    }
+
+    pub fn draw_mask(&self, output_frame: &mut Mat, index: usize) -> Result<()> {
+        self.masks[index].copy_to(output_frame)?;
+        Ok(())
+    }
+
+    pub fn find_object_contour(&mut self, index: usize) -> Result<()> {
+        let mut inverted_mask = Mat::default();
+        core::bitwise_not(&self.masks[index], &mut inverted_mask, &no_array())?;
+
+        // Find contours
+        let mut contours = Vector::<Vector<Point>>::new();
+        imgproc::find_contours(
+            &inverted_mask,
+            &mut contours,
+            imgproc::RETR_EXTERNAL,
+            imgproc::CHAIN_APPROX_SIMPLE,
+            Point::new(0, 0),
+        )?;
+
+        if !contours.is_empty() {
+            // Select the largest contour
+            self.contours[index] = contours
+                .iter()
+                .max_by_key(|contour| imgproc::contour_area(&contour, false).unwrap_or(0.0) as i32)
+                .unwrap();
+
+            return Ok(());
+        }
+        self.contours[index].clear();
+        Ok(())
+    }
+
+    pub fn draw_contours(&self, output_frame: &mut Mat) -> Result<()> {
+        for contour in &self.contours {
+            if !contour.is_empty() {
+                imgproc::draw_contours(
+                    output_frame,
+                    &Vector::<Vector<Point>>::from(vec![contour.clone()]),
+                    -1,
+                    core::Scalar::new(0.0, 255.0, 0.0, 0.0),
+                    2,
+                    imgproc::LINE_AA,
+                    &no_array(),
+                    0,
+                    Point::new(0, 0),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn extract_object(&self, index: usize) -> Result<Vec<Point>> {
+        let rows = self.masks[index].rows();
+        let cols = self.masks[index].cols();
+        let mut object = Vec::new();
+        let mut y = 0;
+        while y < rows {
+            let mut x = 0;
+            while x < cols {
+                if *self.masks[index].at_2d::<u8>(y, x)? == 0 {
+                    object.push(Point::new(x, y));
+                }
+                x += self.pixel_size + self.spacing;
+            }
+            y += self.pixel_size + self.spacing;
+        }
+        Ok(object)
+    }
+
+    pub fn find_closest_points(&self, index_1: usize, index_2: usize) -> Result<(Point, Point)> {
+        let mut min_distance = f64::MAX;
+        let mut closest_point_1 = Point::new(0, 0);
+        let mut closest_point_2 = Point::new(0, 0);
+
+        for point_1 in self.contours[index_1].iter() {
+            for point_2 in self.contours[index_2].iter() {
+                let dx = (point_1.x - point_2.x) as f64;
+                let dy = (point_1.y - point_2.y) as f64;
+                let distance = (dx * dx + dy * dy).sqrt();
+
+                if distance < min_distance {
+                    min_distance = distance;
+                    closest_point_1 = point_1;
+                    closest_point_2 = point_2;
+                }
+            }
+        }
+
+        Ok((closest_point_1, closest_point_2))
+    }
 }
