@@ -34,8 +34,8 @@ As mentioned, one of the main reasons for using this specific stack was to learn
 The core workflow of project can be broken down into four main steps:
 
 1. Video Capture: Short clips of human actions (pre-recorded) and real-time interactions (live).
-   - 1.1. Processing each frame of the videos to detect human silhouettes and extract them.
-   - 1.2. If the interaction is detected and effect is applied to the silhouette in the frame -> particle system is created -> video frame is ignored until the particle system is finished.
+   - 1.1. Process the video frame by frame.
+   - 1.2. If effect is applied to the silhouette in the frame -> particle system is created -> video frame is ignored until the particle system is finished.
 2. Frame Processing: The recorded videos are processed to detect human silhouettes.
    - 2.1. Converting to grayscale to simplify silhouette extraction.
    - 2.2. Threshold filtering to remove background noise.
@@ -52,60 +52,50 @@ The core workflow of project can be broken down into four main steps:
    - 4.5. Adding pixelated silhouettes to output frame.
 5. Drowing the output: Drawing the pixelated silhouettes and particle systems on the screen.
 
-<!-- ## 4. Implementation and Progress
+## 4. Implementation and Progress
 
-Current Progress
+The implementation of Pixelated EchoMotion is still in progress, with the core components being developed and tested in isolation. Due to technical challenges and time constraints, a full prototype has not been completed. However, the following components have been developed and tested:
 
-- Learning Phase: Time has primarily been spent understanding Rust, OpenCV, and the intricacies of real-time video and particle-based systems.
-- Technical Setup: Preliminary work on pixelization and interaction algorithms, though full-scale experiments are still pending.
-- Conceptual Planning: Detailed descriptions and visual designs of the two-zone setup for exhibitions have been developed.
+1. **Video Capture and Processing**: The project can capture short video clips and process them to extract human silhouettes. The OpenCV library is used to handle video input and frame processing, converting frames to grayscale, applying threshold filters, and extracting silhouettes.
 
-Challenges
+2. **Silhouette Extraction and Pixelization**: The project can extract silhouettes from processed frames and convert them into pixel animations. The extracted silhouettes are pixelized and converted into particle systems for interaction. The particle systems can be manipulated to create effects like grabbing, repelling, and pixel explosions.
 
-- Developing real-time interaction systems within the constraints of performance and memory.
-- Limited time for experimentation due to the steep learning curve associated with Rust and new libraries.
+3. **Interaction Detection**: The project can detect interactions between silhouettes based on the distance between two points. When two silhouettes come close enough, an interaction is triggered, and the particle system responds accordingly.
 
-Planned Enhancements
+4. **Output Rendering**: The project can render the pixelated silhouettes and particle systems on the screen, creating a visual representation of human actions and
+   interactions.
 
-- Detailed descriptions of the interaction process and ideal setups for exhibitions.
-- Illustrative diagrams showing how zones are designed to foster engagement.
+The project has been tested in a small scale, with recorded videos and real-time interactions demonstrating the core concepts of Pixelated EchoMotion. The technical implementation has been challenging due to the complexity of real-time video processing and interaction systems. However, the project has made progress in developing the core components and laying the groundwork for a full prototype.
 
 ## 5. Outcomes
 
-While technical hurdles have prevented the creation of a full prototype, the conceptual work lays the groundwork for:
-
-- A scalable system capable of real-time silhouette interaction.
-- A design philosophy centered on creativity, engagement, and the interplay between recorded and live actions.
-- A vision for an exhibition where human silhouettes transcend time and physical boundaries.
+You can find the images and videos of the project in the `media` folder.
 
 ## 6. Personal Learning Goals
 
-1. Mastering Video Manipulation and Pixel Art:
-   - Gained a deeper understanding of silhouette extraction and pixel processing.
-2. Experimenting with Dynamic Interaction:
-   - Explored the basics of collision detection and particle systems for interactive pixel animations.
-3. Exploring Computational Art:
-   - Conceptually expanded the boundaries of art by linking human actions across time and space.
+Working on this project has been a valuable learning experience, allowing me to explore new technologies, experiment with creative ideas, and develop technical skills. Some of the key learning goals achieved through this project include:
+
+- **Rust Programming**: Gaining proficiency in Rust programming language, understanding its syntax, memory management, and concurrency features.
+- **Real-time Processing**: Exploring real-time video processing and interaction systems, learning how to optimize performance and memory usage.
+- **Creative Coding**: Experimenting with creative coding techniques, such as pixel art, particle systems, and interactive installations.
+- **Art and Technology**: Exploring the intersection of art and technology, blending digital representation with human interaction in a creative context.
+
+Overall, the project has been a rewarding experience, pushing me to explore new ideas, learn new technologies, and develop my skills as a creative coder and technologist.
 
 ## 7. Future Directions
 
-Ideal Setup for Exhibition
+This project has the potential to evolve into a dynamic and engaging interactive installation that connects human actions across time and space. Some of the future directions for Pixelated EchoMotion include:
 
-- Zone 1:
-  - Participants record short videos (10-30 seconds) of their actions.
-  - These videos are processed into pixel animations and stored in a shared repository.
-- Zone 2:
-  - Participants interact with the stored animations through a camera and projector setup.
-  - Past silhouettes from previous exhibitions encourage interactions that transcend time and geography.
-
-Technical Improvements
-
-- Real-time optimization of the silhouette extraction and particle systems.
-- Deployment of a scalable setup capable of running in exhibition spaces with minimal delay.
+- **Full Prototype Development**: Completing the technical implementation of the project to create a full prototype that can be exhibited in public spaces.
+- **Interactive Exhibitions**: Showcasing Pixelated EchoMotion in exhibitions or events where participants can engage with the installation in a shared environment.
+- **Collaborative Interactions**: Exploring collaborative interactions between participants, allowing them to create and interact with pixelated silhouettes together.
+- **Dynamic Effects**: Adding more dynamic effects to the particle systems, such as color changes, size variations, and movement patterns.
 
 ## 8. Conclusion
 
-Pixelated EchoMotion is a creative exploration of human interaction through the lens of digital representation. Despite technical challenges, the project has opened new avenues for blending art, technology, and interactivity. The vision of connecting human actions across time and space continues to guide its evolution toward a dynamic and engaging installation. -->
+I learned a lot from this project, both technically and artistically. I explored new technologies, experimented with creative ideas, and developed my skills as a creative coder and technologist. While the project is still in progress, I am excited about the potential of Pixelated EchoMotion to create engaging and interactive experiences that connect human actions in unique and creative ways.
+
+Even though the project is still in the development phase, I am proud of the progress made so far and look forward to continuing to work on it in the future if possible. I believe that this project has the potential to be a dynamic and engaging interactive installation that fosters creativity, connection, and playfulness through abstract digital art and real-time interaction systems.
 
 ## Links
 
