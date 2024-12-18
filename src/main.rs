@@ -89,7 +89,7 @@ async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         println!(
-            "Usage: {} [webcam <webcam_index>|file <video_path_1> <video_path_2>]",
+            "Usage: {} [webcam <webcam_index> | file <video_path_1>] <video_path_2> [print_info | print_time_logs]",
             args[0]
         );
         return Ok(());
@@ -97,8 +97,12 @@ async fn main() -> Result<()> {
 
     // Initialize the video sources
     let mut video_source_1 = VideoSource::new()?;
-    video_source_1.set_source_file(&args[2])?;
-    video_source_1.set_resolution(VIDEO_RESOLUTION_WIDTH, VIDEO_RESOLUTION_HEIGHT)?;
+    if args[1] == "webcam" {
+        video_source_1.set_source_webcam(args[2].parse::<i32>()?)?;
+    } else {
+        video_source_1.set_source_file(&args[2])?;
+        video_source_1.set_resolution(VIDEO_RESOLUTION_WIDTH, VIDEO_RESOLUTION_HEIGHT)?;
+    }
     video_source_1.update_frame()?;
 
     let mut video_source_2 = VideoSource::new()?;
@@ -174,9 +178,9 @@ async fn main() -> Result<()> {
         let mut add_object_time = std::time::Duration::new(0, 0);
 
         // Update the particle system
-        if particle_system.get_animation_status(0)? {
-            particle_system.update(point_2).await?;
-            object_2 = frame_processor.extract_object(1).await?;
+        if particle_system.get_animation_status(1)? {
+            particle_system.update(point_1).await?;
+            object_1 = frame_processor.extract_object(0).await?;
 
             // Add the object to the particle system
             extract_object_time = std::time::Instant::now()
@@ -185,7 +189,7 @@ async fn main() -> Result<()> {
                 - closest_points_time;
 
             particle_system
-                .add_object(Arc::clone(&frame2), &object_2, 1)
+                .add_object(Arc::clone(&frame1), &object_1, 0)
                 .await?;
 
             // Measure the add object time
@@ -221,15 +225,20 @@ async fn main() -> Result<()> {
                 - extract_object_time;
 
             if detect_interference(point_1, point_2, &mut particle_system.output_frame)? {
-                println!("Interference detected");
-                particle_system.set_animation_status(0, true);
-                // Randomly choose the effect type for the particle system
+                particle_system.set_animation_status(1, true);
                 let rundom_number = Rng::gen_range(&mut rand::thread_rng(), 0..3);
+                let mut effect;
                 match rundom_number {
-                    0 => particle_system.set_effect_type(0, EffectType::Explosion),
-                    1 => particle_system.set_effect_type(0, EffectType::Push),
-                    2 => particle_system.set_effect_type(0, EffectType::Break),
-                    _ => particle_system.set_effect_type(0, EffectType::Push),
+                    0 => effect = EffectType::Explosion,
+                    2 => effect = EffectType::Break,
+                    _ => effect = EffectType::Push,
+                }
+
+                particle_system.set_effect_type(1, effect);
+
+                // Print the interference message
+                if args.len() > 4 && args[4] == "print_info" {
+                    println!("Interference detected! Effect: {:?}", effect);
                 }
             }
         }
@@ -250,10 +259,28 @@ async fn main() -> Result<()> {
 
         // Measure the total loop time
         let loop_time = std::time::Instant::now() - loop_start;
-        println!(
-            "Extract object: {:?}, Add object: {:?}, Particle system update: {:?}, Loop: {:?}",
-            extract_object_time, add_object_time, particle_system_update_time, loop_time
-        );
+
+        // Print the time logs
+        if args.len() > 4 && args[4] == "print_time_logs" {
+            println!(
+                "{:<25} {:<25} {:<25} {:<25} {:<25} {:<25}",
+                "Frame processing time:",
+                "Closest points time:",
+                "Extract object time:",
+                "Add object time:",
+                "P-system update time:",
+                "Loop time:"
+            );
+            println!(
+                "{:<25?} {:<25?} {:<25?} {:<25?} {:<25?} {:<25?}",
+                frame_processing_time,
+                closest_points_time,
+                extract_object_time,
+                add_object_time,
+                particle_system_update_time,
+                loop_time
+            );
+        }
 
         // Sleep asynchronously to avoid high CPU usage
         tokio::time::sleep(Duration::from_millis(1)).await;

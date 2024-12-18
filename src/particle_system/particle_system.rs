@@ -10,7 +10,7 @@ use opencv::{
 
 use rand::Rng;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 // Enum to represent different effects
 pub enum EffectType {
     Push,      // Existing push-around-mouse effect
@@ -109,11 +109,14 @@ impl Particle {
         self.vx *= 0.98;
         self.vy *= 0.98;
         self.x += self.vx;
-        self.y += self.vy;
 
         if self.y >= (self.window_size.height as f64 - 20.0) {
             self.y = self.window_size.height as f64 - 20.0; // Stop particles at the bottom
             self.vy = 0.0;
+            self.on_position = true;
+        } else {
+            self.y += self.vy;
+            self.on_position = false;
         }
     }
 
@@ -153,6 +156,17 @@ impl Particle {
         self.y += self.vy;
 
         self.check_world_boundaries();
+        if (self.x >= self.window_size.width as f64 - 1.0
+            || self.x <= 1.0
+            || self.y >= self.window_size.height as f64 - 1.0
+            || self.y <= 1.0)
+        {
+            self.on_position = true;
+            self.vx = 0.0;
+            self.vy = 0.0;
+        } else {
+            self.on_position = false;
+        }
     }
 
     fn move_towards_origin(&mut self) {
@@ -301,7 +315,6 @@ impl ParticleSystem {
     pub async fn update(&mut self, point: Point) -> Result<()> {
         let effect_types = self.effect_types.clone();
         let interference_distance = self.interference_distance;
-        let particle_count = self.particle_system.len();
 
         // Iterate over each particle group in parallel
         self.particle_system
