@@ -218,7 +218,7 @@ impl ParticleSystem {
         Ok(Scalar::new(avg_color[0], avg_color[1], avg_color[2], 0.0))
     }
 
-    pub fn add_oject(&mut self, frame: &Mat, object: &Vec<Point>, index: usize) -> Result<()> {
+    pub fn add_object(&mut self, frame: &Mat, object: &Vec<Point>, index: usize) -> Result<()> {
         let mut particles = Vec::new();
         for point in object {
             particles.push(Particle::new(
@@ -229,7 +229,7 @@ impl ParticleSystem {
             ));
         }
         self.particle_system[index] = particles;
-        self.animation_statuses[index] = true;
+        self.animation_statuses[index] = false;
 
         Ok(())
     }
@@ -268,5 +268,13 @@ impl ParticleSystem {
 
     pub fn get_animation_status(&self, index: usize) -> Result<bool> {
         Ok(self.animation_statuses[index])
+    }
+
+    pub fn set_animation_status(&mut self, index: usize, status: bool) {
+        self.animation_statuses[index] = status;
+    }
+
+    pub fn set_effect_type(&mut self, index: usize, effect_type: EffectType) {
+        self.effect_types[index] = effect_type;
     }
 }
