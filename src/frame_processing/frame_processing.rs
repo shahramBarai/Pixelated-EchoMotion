@@ -163,43 +163,132 @@ impl FrameProcessor {
         Ok(())
     }
 
-    pub fn extract_object(&self, index: usize) -> Result<Vec<Point>> {
+    // Extract object points from the mask
+    // Divide the work into chunks based on the rows and parallelize the processing
+    pub async fn extract_object(&self, index: usize) -> Result<Vec<Point>> {
         let rows = self.masks[index].rows();
         let cols = self.masks[index].cols();
-        let mut object = Vec::new();
-        let mut y = 0;
-        while y < rows {
-            let mut x = 0;
-            while x < cols {
-                if *self.masks[index].at_2d::<u8>(y, x)? == 0 {
-                    object.push(Point::new(x, y));
+        let pixel_size = self.pixel_size;
+        let spacing = self.spacing;
+
+        // Number of CPUs for parallelization
+        let num_cpus = num_cpus::get();
+        // Determine chunk size in terms of rows
+        let total_row_steps = (0..rows).step_by((pixel_size + spacing) as usize).count();
+        let chunk_size = (total_row_steps + num_cpus - 1) / num_cpus;
+
+        let mask = self.masks[index].clone(); // Clone the mask (Mat is ref-counted)
+        let mut tasks = Vec::new();
+
+        // We will process rows in steps of pixel_size + spacing
+        let row_indices: Vec<usize> = (0..rows as usize)
+            .step_by((pixel_size + spacing) as usize)
+            .collect();
+
+        for chunk in row_indices.chunks(chunk_size) {
+            let chunk = chunk.to_vec();
+            let mask_clone = mask.clone();
+
+            let handle = tokio::task::spawn_blocking(move || {
+                let mut partial_result = Vec::new();
+                for &y in &chunk {
+                    let mut x = 0;
+                    while x < cols {
+                        // Check if the pixel at (y, x) is black
+                        let pixel_val = unsafe { *mask_clone.at_2d::<u8>(y as i32, x as i32)? };
+                        if pixel_val == 0 {
+                            partial_result.push(Point::new(x as i32, y as i32));
+                        }
+                        x += pixel_size + spacing;
+                    }
                 }
-                x += self.pixel_size + self.spacing;
-            }
-            y += self.pixel_size + self.spacing;
+                Ok(partial_result)
+            });
+
+            tasks.push(handle);
         }
+
+        // Gather results from all tasks
+        let mut object = Vec::new();
+        for t in tasks {
+            let points = t.await??;
+            object.extend(points);
+        }
+
         Ok(object)
     }
 
-    pub fn find_closest_points(&self, index_1: usize, index_2: usize) -> Result<(Point, Point)> {
-        let mut min_distance = f64::MAX;
-        let mut closest_point_1 = Point::new(0, 0);
-        let mut closest_point_2 = Point::new(0, 0);
+    // Find the two closest points between two contours
+    // Divide the work into chunks based on the number of points in the first contour
+    pub async fn find_closest_points(
+        &self,
+        index_1: usize,
+        index_2: usize,
+    ) -> Result<(Point, Point)> {
+        let contour_1 = &self.contours[index_1];
+        let contour_2 = &self.contours[index_2];
 
-        for point_1 in self.contours[index_1].iter() {
-            for point_2 in self.contours[index_2].iter() {
-                let dx = (point_1.x - point_2.x) as f64;
-                let dy = (point_1.y - point_2.y) as f64;
-                let distance = (dx * dx + dy * dy).sqrt();
+        if contour_1.is_empty() || contour_2.is_empty() {
+            return Ok((Point::new(0, 0), Point::new(0, 0)));
+        }
 
-                if distance < min_distance {
-                    min_distance = distance;
-                    closest_point_1 = point_1;
-                    closest_point_2 = point_2;
+        // Clone data since we'll be moving them into tasks
+        let contour_1_data = contour_1.clone();
+        let contour_2_data = contour_2.clone();
+
+        let num_cpus = num_cpus::get();
+        // Determine chunk size for splitting contour_1
+        let chunk_size = (contour_1_data.len() + num_cpus - 1) / num_cpus;
+
+        let mut tasks = Vec::new();
+
+        for chunk in contour_1_data.as_slice().chunks(chunk_size) {
+            let chunk = chunk.to_vec();
+            let contour_2_data = contour_2_data.clone();
+
+            // Spawn a blocking task for each chunk
+            let handle = tokio::task::spawn_blocking(move || {
+                let mut local_min_distance = f64::MAX;
+                let mut local_closest_point_1 = Point::new(0, 0);
+                let mut local_closest_point_2 = Point::new(0, 0);
+
+                for &point_1 in &chunk {
+                    for point_2 in &contour_2_data {
+                        let dx = (point_1.x - point_2.x) as f64;
+                        let dy = (point_1.y - point_2.y) as f64;
+                        let distance = (dx * dx + dy * dy).sqrt();
+
+                        if distance < local_min_distance {
+                            local_min_distance = distance;
+                            local_closest_point_1 = point_1;
+                            local_closest_point_2 = point_2;
+                        }
+                    }
                 }
+                Ok::<(f64, Point, Point)>((
+                    local_min_distance,
+                    local_closest_point_1,
+                    local_closest_point_2,
+                ))
+            });
+
+            tasks.push(handle);
+        }
+
+        // Combine results from all tasks
+        let mut global_min_distance = f64::MAX;
+        let mut global_closest_point_1 = Point::new(0, 0);
+        let mut global_closest_point_2 = Point::new(0, 0);
+
+        for t in tasks {
+            let (dist, p1, p2) = t.await??;
+            if dist < global_min_distance {
+                global_min_distance = dist;
+                global_closest_point_1 = p1;
+                global_closest_point_2 = p2;
             }
         }
 
-        Ok((closest_point_1, closest_point_2))
+        Ok((global_closest_point_1, global_closest_point_2))
     }
 }
