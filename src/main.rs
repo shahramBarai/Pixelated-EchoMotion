@@ -5,20 +5,19 @@ mod video_capture;
 
 use frame_processing::FrameProcessor;
 use gui_interaction::Window;
+use particle_system::{EffectType, ParticleSystem};
 use rand::Rng;
 use video_capture::VideoSource;
 
-use std::{sync::Arc, time::Duration};
-
 use anyhow::{Ok, Result}; // Automatically handle the error types
-use particle_system::{EffectType, ParticleSystem}; // Import the ParticleSystem and EffectType
-
 use opencv::{
     core::{self, Point},
     highgui::wait_key,
     imgproc,
     prelude::*,
 };
+
+use std::{fs, path::PathBuf, sync::Arc, time::Duration};
 
 // Define the constants
 const PIXEL_SIZE: i32 = 1; // Define maximum possible pixel size
@@ -28,7 +27,7 @@ const WINDOW_WIDTH: i32 = 960; // Define the width of the window
 const WINDOW_HEIGHT: i32 = 540; // Define the height of the window
 const VIDEO_RESOLUTION_WIDTH: i32 = 1920; // Define the width of the video resolution
 const VIDEO_RESOLUTION_HEIGHT: i32 = 1080; // Define the height of the video resolution
-const OBJECTS_INTERFERENCE_DISTANCE: i32 = 100; // Define the distance to detect interference
+const OBJECTS_INTERFERENCE_DISTANCE: i32 = 10; // Define the distance to detect interference
 
 fn detect_interference(point_1: Point, point_2: Point, output: &mut Mat) -> Result<bool> {
     if point_1.x == 0 && point_1.y == 0 && point_2.x == 0 && point_2.y == 0 {
@@ -87,15 +86,15 @@ fn detect_interference(point_1: Point, point_2: Point, output: &mut Mat) -> Resu
 #[tokio::main]
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 {
+    if args.len() < 4 {
         println!(
-            "Usage: {} [webcam <webcam_index> | file <video_path_1>] <video_path_2> [print_info | print_time_logs]",
+            "Usage: {} [webcam <webcam_index> | file <video_path_1>] <folder_for_video_sources> [print_info | print_time_logs]",
             args[0]
         );
         return Ok(());
     }
 
-    // Initialize the video sources
+    // Initialize the first video source
     let mut video_source_1 = VideoSource::new()?;
     if args[1] == "webcam" {
         video_source_1.set_source_webcam(args[2].parse::<i32>()?)?;
@@ -105,8 +104,32 @@ async fn main() -> Result<()> {
     }
     video_source_1.update_frame()?;
 
+    // Read all video files from the folder specified in args[3]
+    let video_folder = std::path::Path::new(&args[3]);
+    let mut video_files = fs::read_dir(video_folder)?
+        .filter_map(|entry| entry.ok())
+        .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
+        .map(|e| e.path())
+        .filter(|p| p.extension().map_or(false, |ext| ext == "mp4")) // Filter for .mp4 files
+        .collect::<Vec<PathBuf>>();
+
+    // Sort files to have a consistent order
+    video_files.sort();
+
+    if video_files.is_empty() {
+        eprintln!("No video files found in the specified folder: {}", args[3]);
+        return Ok(());
+    }
+
+    // Initialize second video source with the first video in the folder
     let mut video_source_2 = VideoSource::new()?;
-    video_source_2.set_source_file(&args[3])?;
+    let mut current_video_index = 0;
+    video_source_2.set_source_file(
+        &video_files[current_video_index]
+            .to_str()
+            .unwrap()
+            .to_string(),
+    )?;
     video_source_2.set_resolution(VIDEO_RESOLUTION_WIDTH, VIDEO_RESOLUTION_HEIGHT)?;
     video_source_2.update_frame()?;
 
@@ -131,16 +154,35 @@ async fn main() -> Result<()> {
     let mut point_1 = Point::new(0, 0);
     let mut point_2 = Point::new(0, 0);
 
+    let mut start_next_video = false;
+
     loop {
         // Measure loop start time
         let loop_start = std::time::Instant::now();
 
-        // Update the frames from the video sources
+        // Update the first video source frame
         if !video_source_1.update_frame()? {
-            break;
+            video_source_1.set_source_file(&args[2])?;
+            video_source_1.update_frame()?;
         }
-        if !video_source_2.update_frame()? {
-            break;
+
+        // Update the second video source frame
+        if !video_source_2.update_frame()? || start_next_video {
+            start_next_video = false; // Reset the flag
+
+            // If the current video ended, move to the next one
+            current_video_index = (current_video_index + 1) % video_files.len();
+            video_source_2.set_source_file(
+                &video_files[current_video_index]
+                    .to_str()
+                    .unwrap()
+                    .to_string(),
+            )?;
+            video_source_2.set_resolution(VIDEO_RESOLUTION_WIDTH, VIDEO_RESOLUTION_HEIGHT)?;
+            if !video_source_2.update_frame()? {
+                // If the new video also fails (shouldn't happen), just continue
+                continue;
+            }
         }
 
         // Clear output frame
@@ -174,6 +216,7 @@ async fn main() -> Result<()> {
 
         // Measure the closest points calculation time
         let closest_points_time = std::time::Instant::now() - loop_start - frame_processing_time;
+
         let mut extract_object_time = std::time::Duration::new(0, 0);
         let mut add_object_time = std::time::Duration::new(0, 0);
 
@@ -227,14 +270,15 @@ async fn main() -> Result<()> {
             if detect_interference(point_1, point_2, &mut particle_system.output_frame)? {
                 particle_system.set_animation_status(1, true);
                 let rundom_number = Rng::gen_range(&mut rand::thread_rng(), 0..3);
-                let mut effect;
-                match rundom_number {
-                    0 => effect = EffectType::Explosion,
-                    2 => effect = EffectType::Break,
-                    _ => effect = EffectType::Push,
-                }
-
+                let effect = match rundom_number {
+                    0 => EffectType::Explosion,
+                    2 => EffectType::Break,
+                    _ => EffectType::Explosion,
+                };
                 particle_system.set_effect_type(1, effect);
+
+                // Start the next video after the interference effect
+                start_next_video = true;
 
                 // Print the interference message
                 if args.len() > 4 && args[4] == "print_info" {
@@ -283,7 +327,7 @@ async fn main() -> Result<()> {
         }
 
         // Sleep asynchronously to avoid high CPU usage
-        tokio::time::sleep(Duration::from_millis(1)).await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
     Ok(())
 }
