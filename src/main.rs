@@ -5,12 +5,10 @@ mod video_capture;
 
 use frame_processing::FrameProcessor;
 use gui_interaction::Window;
+use rand::Rng;
 use video_capture::VideoSource;
 
-use std::{
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 
 use anyhow::{Ok, Result}; // Automatically handle the error types
 use particle_system::{EffectType, ParticleSystem}; // Import the ParticleSystem and EffectType
@@ -21,8 +19,6 @@ use opencv::{
     imgproc,
     prelude::*,
 };
-
-use tokio::task;
 
 // Define the constants
 const PIXEL_SIZE: i32 = 1; // Define maximum possible pixel size
@@ -35,6 +31,10 @@ const VIDEO_RESOLUTION_HEIGHT: i32 = 1080; // Define the height of the video res
 const OBJECTS_INTERFERENCE_DISTANCE: i32 = 100; // Define the distance to detect interference
 
 fn detect_interference(point_1: Point, point_2: Point, output: &mut Mat) -> Result<bool> {
+    if point_1.x == 0 && point_1.y == 0 && point_2.x == 0 && point_2.y == 0 {
+        return Ok(false);
+    }
+
     let dx = (point_1.x - point_2.x) as f64;
     let dy = (point_1.y - point_2.y) as f64;
     let distance = (dx * dx + dy * dy).sqrt() as i32;
@@ -86,9 +86,6 @@ fn detect_interference(point_1: Point, point_2: Point, output: &mut Mat) -> Resu
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize the logger
-    env_logger::init();
-
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         println!(
@@ -125,8 +122,8 @@ async fn main() -> Result<()> {
     // Initialize GUI window and mouse events
     let window = Window::new(WINDOW_NAME, WINDOW_WIDTH, WINDOW_HEIGHT)?;
 
-    let mut object_1 = Vec::new();
-    let mut object_2 = Vec::new();
+    let mut object_1: Vec<Point> = Vec::new();
+    let mut object_2: Vec<Point> = Vec::new();
     let mut point_1 = Point::new(0, 0);
     let mut point_2 = Point::new(0, 0);
 
@@ -187,7 +184,9 @@ async fn main() -> Result<()> {
                 - frame_processing_time
                 - closest_points_time;
 
-            particle_system.add_object(&frame2, &object_2, 1).await?;
+            particle_system
+                .add_object(Arc::clone(&frame2), &object_2, 1)
+                .await?;
 
             // Measure the add object time
             add_object_time = std::time::Instant::now()
@@ -207,8 +206,12 @@ async fn main() -> Result<()> {
                 - closest_points_time;
 
             // Add the objects to the particle system
-            particle_system.add_object(&frame1, &object_1, 0).await?;
-            particle_system.add_object(&frame2, &object_2, 1).await?;
+            particle_system
+                .add_object(Arc::clone(&frame1), &object_1, 0)
+                .await?;
+            particle_system
+                .add_object(Arc::clone(&frame2), &object_2, 1)
+                .await?;
 
             // Measure the add object time
             add_object_time = std::time::Instant::now()
@@ -218,8 +221,16 @@ async fn main() -> Result<()> {
                 - extract_object_time;
 
             if detect_interference(point_1, point_2, &mut particle_system.output_frame)? {
+                println!("Interference detected");
                 particle_system.set_animation_status(0, true);
-                particle_system.set_effect_type(0, EffectType::Push);
+                // Randomly choose the effect type for the particle system
+                let rundom_number = Rng::gen_range(&mut rand::thread_rng(), 0..3);
+                match rundom_number {
+                    0 => particle_system.set_effect_type(0, EffectType::Explosion),
+                    1 => particle_system.set_effect_type(0, EffectType::Push),
+                    2 => particle_system.set_effect_type(0, EffectType::Break),
+                    _ => particle_system.set_effect_type(0, EffectType::Push),
+                }
             }
         }
 
