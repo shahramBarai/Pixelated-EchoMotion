@@ -6,7 +6,9 @@ use opencv::{
 };
 
 use rand::Rng;
+use tokio::task::spawn_blocking;
 
+#[derive(Clone, Copy)]
 // Enum to represent different effects
 pub enum EffectType {
     Push,      // Existing push-around-mouse effect
@@ -57,28 +59,27 @@ impl Particle {
         &mut self,
         effect_type: &EffectType,
         mouse_coords: Point,
-        mouse_radius: f64,
+        interference_distance: f64,
     ) {
         match effect_type {
-            EffectType::Push => self.update_push(mouse_coords, mouse_radius),
+            EffectType::Push => self.update_push(mouse_coords, interference_distance),
             EffectType::Break => self.update_break(),
             EffectType::Explosion => self.update_explosion(mouse_coords),
         }
     }
 
-    fn update_push(&mut self, mouse_coords: Point, mouse_radius: f64) {
+    fn update_push(&mut self, mouse_coords: Point, interference_distance: f64) {
         // Influence by mouse
         let dx = mouse_coords.x as f64 - self.x;
         let dy = mouse_coords.y as f64 - self.y;
         let distance = dx * dx + dy * dy;
-        let force;
-        if distance == 0.0 {
-            force = 0.0;
+        let force = if distance == 0.0 {
+            0.0
         } else {
-            force = -mouse_radius / distance;
-        }
+            -interference_distance / distance
+        };
 
-        if distance < mouse_radius {
+        if distance < interference_distance {
             let angel = dy.atan2(dx);
             self.vx += force * angel.cos();
             self.vy += force * angel.sin();
@@ -154,20 +155,25 @@ pub struct ParticleSystem {
     pixel_size: i32,
     pixel_spacing: i32,
     animation_statuses: Vec<bool>,
-    mouse_radius: f64,
+    interference_distance: f64,
     effect_types: Vec<EffectType>,
     pub output_frame: Mat,
 }
 
 impl ParticleSystem {
-    pub fn new(window_size: Size, pixel_size: i32, pixel_spacing: i32, mouse_radius: i32) -> Self {
+    pub fn new(
+        window_size: Size,
+        pixel_size: i32,
+        pixel_spacing: i32,
+        interference_distance: i32,
+    ) -> Self {
         ParticleSystem {
             window_size,
             particle_system: Vec::new(),
             pixel_size,
             pixel_spacing,
             animation_statuses: Vec::new(),
-            mouse_radius: mouse_radius as f64,
+            interference_distance: interference_distance as f64,
             effect_types: Vec::new(),
             output_frame: Mat::default(),
         }
@@ -178,7 +184,7 @@ impl ParticleSystem {
         self.animation_statuses.clear();
         self.effect_types.clear();
 
-        for i in 0..amount {
+        for _ in 0..amount {
             self.particle_system.push(Vec::new());
             self.animation_statuses.push(false);
             self.effect_types.push(EffectType::Push);
@@ -190,32 +196,13 @@ impl ParticleSystem {
     }
 
     fn get_pixel_color(&self, frame: &Mat, point: &Point) -> Result<Scalar> {
-        // TODO: Remove this after demo
-        if true {
-            let color = frame.at_2d::<core::Vec3b>(point.y, point.x)?;
-            return Ok(Scalar::new(
-                color[0] as f64,
-                color[1] as f64,
-                color[2] as f64,
-                0.0,
-            ));
-        }
-
-        if point.x < 0
-            || point.y < 0
-            || point.x + self.pixel_size > frame.cols()
-            || point.y + self.pixel_size > frame.rows()
-        {
-            return Ok(Scalar::new(0.0, 0.0, 0.0, 0.0));
-        }
-        // Calculate average color within the circle's region
-        let rect = Rect::new(point.x, point.y, self.pixel_size, self.pixel_size);
-
-        // Get the sub-matrix of the input frame
-        let sub_mat = Mat::roi(frame, rect)?;
-        let avg_color = core::mean(&sub_mat, &core::no_array())?;
-
-        Ok(Scalar::new(avg_color[0], avg_color[1], avg_color[2], 0.0))
+        let color = frame.at_2d::<core::Vec3b>(point.y, point.x)?;
+        Ok(Scalar::new(
+            color[0] as f64,
+            color[1] as f64,
+            color[2] as f64,
+            0.0,
+        ))
     }
 
     pub fn add_object(&mut self, frame: &Mat, object: &Vec<Point>, index: usize) -> Result<()> {
@@ -234,16 +221,40 @@ impl ParticleSystem {
         Ok(())
     }
 
-    pub fn update(&mut self, mouse_coords: Point) -> Result<()> {
-        let i = 0;
-        for particles in &mut self.particle_system {
-            let mut all_on_position = true;
-            for particle in particles {
-                particle.update_with_effect(&self.effect_types[i], mouse_coords, self.mouse_radius);
-                if all_on_position && !particle.on_position {
-                    all_on_position = false;
-                }
-            }
+    // Update the particle system with the given point
+    pub async fn update(&mut self, point: Point) -> Result<()> {
+        let effect_types = self.effect_types.clone();
+        let interference_distance = self.interference_distance;
+        let particle_count = self.particle_system.len();
+
+        // Spawn a blocking task for each particle group
+        let tasks: Vec<_> = (0..particle_count)
+            .map(|i| {
+                let effect_type = effect_types[i];
+                // Extract the particle vector to avoid borrow conflicts
+                let mut particles = std::mem::take(&mut self.particle_system[i]);
+                spawn_blocking(move || {
+                    let mut all_on_position = true;
+                    for particle in &mut particles {
+                        particle.update_with_effect(&effect_type, point, interference_distance);
+                        if all_on_position && !particle.on_position {
+                            all_on_position = false;
+                        }
+                    }
+                    // Return the index, updated particles, and position status
+                    Ok::<(usize, Vec<Particle>, bool), anyhow::Error>((
+                        i,
+                        particles,
+                        all_on_position,
+                    ))
+                })
+            })
+            .collect();
+
+        // Await all tasks and reinsert updated particle data
+        for t in tasks {
+            let (i, particles, all_on_position) = t.await??;
+            self.particle_system[i] = particles;
             self.animation_statuses[i] = !all_on_position;
         }
 
