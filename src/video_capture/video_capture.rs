@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use anyhow::{bail, Result};
 use opencv::{
     prelude::*,
@@ -6,14 +8,14 @@ use opencv::{
 
 pub struct VideoSource {
     capture: VideoCapture,
-    pub frame: Mat,
+    pub frame: Arc<Mutex<Mat>>,
 }
 
 impl VideoSource {
     pub fn new() -> Result<Self> {
         Ok(Self {
             capture: VideoCapture::default()?,
-            frame: Mat::default(),
+            frame: Arc::new(Mutex::new(Mat::default())),
         })
     }
 
@@ -45,10 +47,16 @@ impl VideoSource {
     }
 
     pub fn update_frame(&mut self) -> Result<bool> {
-        self.capture.read(&mut self.frame)?;
-        if self.frame.empty() {
+        let mut frame = Mat::default();
+        self.capture.read(&mut frame)?;
+        if frame.empty() {
             return Ok(false);
         }
+
+        // Update the shared frame
+        let mut shared_frame = self.frame.lock().unwrap();
+        *shared_frame = frame;
+
         Ok(true)
     }
 }
