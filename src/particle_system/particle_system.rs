@@ -1,3 +1,6 @@
+use rayon::prelude::*;
+use std::sync::Arc;
+
 use anyhow::Result; // Automatically handle the error types
 use opencv::{
     core::{self, Point, Rect, Scalar, Size},
@@ -6,7 +9,6 @@ use opencv::{
 };
 
 use rand::Rng;
-use tokio::task::spawn_blocking;
 
 #[derive(Clone, Copy)]
 // Enum to represent different effects
@@ -43,18 +45,6 @@ impl Particle {
         }
     }
 
-    pub fn draw(&self, frame: &mut Mat) -> Result<()> {
-        imgproc::rectangle(
-            frame,
-            Rect::new(self.x as i32, self.y as i32, self.size, self.size),
-            self.color,
-            -1,
-            imgproc::LINE_8,
-            0,
-        )?;
-        Ok(())
-    }
-
     pub fn update_with_effect(
         &mut self,
         effect_type: &EffectType,
@@ -66,12 +56,25 @@ impl Particle {
             EffectType::Break => self.update_break(),
             EffectType::Explosion => self.update_explosion(mouse_coords),
         }
+
+        // Fade color
+        self.fade_color(0.98);
     }
 
-    fn update_push(&mut self, mouse_coords: Point, interference_distance: f64) {
+    fn fade_color(&mut self, factor: f64) {
+        self.color = Scalar::new(
+            self.color[0] * factor,
+            self.color[1] * factor,
+            self.color[2] * factor,
+            self.color[3],
+        );
+    }
+
+    // Update the particle with the push effect based on the given point
+    fn update_push(&mut self, point: Point, interference_distance: f64) {
         // Influence by mouse
-        let dx = mouse_coords.x as f64 - self.x;
-        let dy = mouse_coords.y as f64 - self.y;
+        let dx = point.x as f64 - self.x;
+        let dy = point.y as f64 - self.y;
         let distance = dx * dx + dy * dy;
         let force = if distance == 0.0 {
             0.0
@@ -80,13 +83,15 @@ impl Particle {
         };
 
         if distance < interference_distance {
-            let angel = dy.atan2(dx);
-            self.vx += force * angel.cos();
-            self.vy += force * angel.sin();
+            let angle = dy.atan2(dx); // Corrected variable name
+            self.vx += force * angle.cos();
+            self.vy += force * angle.sin();
         }
 
-        self.vx *= 0.80;
-        self.vy *= 0.80;
+        // Apply friction
+        let friction = 0.80;
+        self.vx *= friction;
+        self.vy *= friction;
 
         self.check_world_boundaries();
         self.move_towards_origin();
@@ -94,11 +99,20 @@ impl Particle {
 
     fn update_break(&mut self) {
         self.vy += 0.5; // Simulate gravity by incrementing vertical velocity
-        self.vy *= 0.98; // Apply slight vertical damping
+
+        // Introduce slight horizontal randomness
+        let mut rng = rand::thread_rng();
+        let horizontal_force: f64 = rng.gen_range(-0.5..0.5);
+        self.vx += horizontal_force;
+
+        // Apply damping to both velocities
+        self.vx *= 0.98;
+        self.vy *= 0.98;
+        self.x += self.vx;
         self.y += self.vy;
 
-        if self.y > self.window_size.height as f64 {
-            self.y = self.window_size.height as f64; // Stop particles at the bottom
+        if self.y >= (self.window_size.height as f64 - 20.0) {
+            self.y = self.window_size.height as f64 - 20.0; // Stop particles at the bottom
             self.vy = 0.0;
         }
     }
@@ -107,15 +121,38 @@ impl Particle {
         let dx = self.x - explosion_center.x as f64;
         let dy = self.y - explosion_center.y as f64;
         let distance = (dx * dx + dy * dy).sqrt().max(1.0); // Avoid division by zero
-        let force = 10.0 / distance; // Arbitrary explosion force
 
-        self.vx += force * dx / distance;
-        self.vy += force * dy / distance;
+        // Base force and randomness
+        let base_force = 500.0 / distance;
+        let mut rng = rand::thread_rng();
+        let random_factor: f64 = rng.gen_range(0.8..1.2); // Random force scaling
+        let random_angle: f64 = rng.gen_range(-0.1..0.1); // Random angle variation
 
-        self.vx *= 0.98; // Apply damping
-        self.vy *= 0.98; // Apply damping
+        let adjusted_force = base_force * random_factor;
+
+        // Apply randomized direction
+        let angle = dy.atan2(dx) + random_angle;
+        self.vx += adjusted_force * angle.cos();
+        self.vy += adjusted_force * angle.sin();
+
+        // Cap velocity to prevent excessive speeds
+        let max_velocity = 20.0; // Maximum velocity
+        let speed = (self.vx * self.vx + self.vy * self.vy).sqrt();
+        if speed > max_velocity {
+            let scale = max_velocity / speed;
+            self.vx *= scale;
+            self.vy *= scale;
+        }
+
+        // Apply damping
+        self.vx *= 0.90; // Reduced damping for faster movement
+        self.vy *= 0.90; // Reduced damping
+
+        // Update positions
         self.x += self.vx;
         self.y += self.vy;
+
+        self.check_world_boundaries();
     }
 
     fn move_towards_origin(&mut self) {
@@ -196,7 +233,7 @@ impl ParticleSystem {
     }
 
     // Get the color of a pixel in the frame at the given point synchronously
-    fn get_pixel_color_sync(frame: &Mat, point: &Point, _pixel_size: i32) -> Result<Scalar> {
+    fn get_pixel_color_sync(frame: Arc<Mat>, point: &Point, _pixel_size: i32) -> Result<Scalar> {
         let color = frame.at_2d::<core::Vec3b>(point.y, point.x)?;
         Ok(Scalar::new(
             color[0] as f64,
@@ -208,7 +245,7 @@ impl ParticleSystem {
 
     pub async fn add_object(
         &mut self,
-        frame: &Mat,
+        frame: Arc<Mat>,
         object: &Vec<Point>,
         index: usize,
     ) -> Result<()> {
@@ -224,21 +261,24 @@ impl ParticleSystem {
         let chunk_size = (object.len() + num_cpus - 1) / num_cpus;
         let chunk_size = if chunk_size == 0 { 1 } else { chunk_size }; // Ensure chunk_size >= 1
 
-        // Clone what we need because we'll move them into tasks
-        let frame_clone = frame.clone();
+        // Use a reference-counted pointer to the frame
+        let frame_arc = Arc::clone(&frame);
+
         let mut tasks = Vec::new();
 
         for chunk in object.chunks(chunk_size) {
-            let frame_chunk = frame_clone.clone();
+            let frame_clone = Arc::clone(&frame_arc);
             let chunk_data = chunk.to_vec();
             let pixel_size = pixel_size;
             let window_size = window_size;
             tasks.push(tokio::task::spawn_blocking(move || {
                 let mut particles = Vec::with_capacity(chunk_data.len());
                 for point in chunk_data {
-                    // get_pixel_color can be expensive if done many times, doing this in parallel helps
-                    let color =
-                        ParticleSystem::get_pixel_color_sync(&frame_chunk, &point, pixel_size)?;
+                    let color = ParticleSystem::get_pixel_color_sync(
+                        frame_clone.clone(),
+                        &point,
+                        pixel_size,
+                    )?;
                     particles.push(Particle::new(window_size, point, pixel_size, color));
                 }
                 Ok::<Vec<Particle>, anyhow::Error>(particles)
@@ -263,36 +303,23 @@ impl ParticleSystem {
         let interference_distance = self.interference_distance;
         let particle_count = self.particle_system.len();
 
-        // Spawn a blocking task for each particle group
-        let tasks: Vec<_> = (0..particle_count)
-            .map(|i| {
+        // Iterate over each particle group in parallel
+        self.particle_system
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(i, particles)| {
                 let effect_type = effect_types[i];
-                // Extract the particle vector to avoid borrow conflicts
-                let mut particles = std::mem::take(&mut self.particle_system[i]);
-                spawn_blocking(move || {
-                    let mut all_on_position = true;
-                    for particle in &mut particles {
-                        particle.update_with_effect(&effect_type, point, interference_distance);
-                        if all_on_position && !particle.on_position {
-                            all_on_position = false;
-                        }
-                    }
-                    // Return the index, updated particles, and position status
-                    Ok::<(usize, Vec<Particle>, bool), anyhow::Error>((
-                        i,
-                        particles,
-                        all_on_position,
-                    ))
-                })
-            })
-            .collect();
+                for particle in particles.iter_mut() {
+                    particle.update_with_effect(&effect_type, point, interference_distance);
+                }
+            });
 
-        // Await all tasks and reinsert updated particle data
-        for t in tasks {
-            let (i, particles, all_on_position) = t.await??;
-            self.particle_system[i] = particles;
-            self.animation_statuses[i] = !all_on_position;
-        }
+        // Update animation statuses
+        self.animation_statuses = self
+            .particle_system
+            .iter()
+            .map(|particles| !particles.iter().all(|p| p.on_position))
+            .collect();
 
         Ok(())
     }
@@ -304,12 +331,34 @@ impl ParticleSystem {
     }
 
     pub fn draw(&mut self) -> Result<()> {
-        // Draw the particles
+        // Create a list of pixel to draw
+        let mut pixels = Vec::new();
+        let mut colors = Vec::new();
+
         for particles in &self.particle_system {
             for particle in particles {
-                particle.draw(&mut self.output_frame)?;
+                pixels.push(Rect::new(
+                    particle.x as i32,
+                    particle.y as i32,
+                    particle.size,
+                    particle.size,
+                ));
+                colors.push(particle.color);
             }
         }
+
+        // Draw all pixel in a single loop
+        for (pixel, color) in pixels.iter().zip(colors.iter()) {
+            imgproc::rectangle(
+                &mut self.output_frame,
+                *pixel,
+                *color,
+                -1,
+                imgproc::LINE_8,
+                0,
+            )?;
+        }
+
         Ok(())
     }
 
