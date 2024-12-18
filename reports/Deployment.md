@@ -48,5 +48,13 @@ cargo build
 Finally, you can run the project by running the following command:
 
 ```bash
-cargo run -- file data/test_staing_midle.mp4 data/test_walking_LR_moving.mp4
+cargo run -- file data/punch.mp4 data/video_sources
 ```
+
+This will run the project and runs the punch video as the main video source or if you want to use your webcam as the main video source, you can run the following command:
+
+```bash
+cargo run -- webcam data/video_sources
+```
+
+**Note:** You need to have a white background to use the webcam as the main video source.
