@@ -195,7 +195,8 @@ impl ParticleSystem {
         Ok(())
     }
 
-    fn get_pixel_color(&self, frame: &Mat, point: &Point) -> Result<Scalar> {
+    // Get the color of a pixel in the frame at the given point synchronously
+    fn get_pixel_color_sync(frame: &Mat, point: &Point, _pixel_size: i32) -> Result<Scalar> {
         let color = frame.at_2d::<core::Vec3b>(point.y, point.x)?;
         Ok(Scalar::new(
             color[0] as f64,
@@ -205,19 +206,54 @@ impl ParticleSystem {
         ))
     }
 
-    pub fn add_object(&mut self, frame: &Mat, object: &Vec<Point>, index: usize) -> Result<()> {
-        let mut particles = Vec::new();
-        for point in object {
-            particles.push(Particle::new(
-                self.window_size,
-                *point,
-                self.pixel_size,
-                self.get_pixel_color(frame, point)?,
-            ));
+    pub async fn add_object(
+        &mut self,
+        frame: &Mat,
+        object: &Vec<Point>,
+        index: usize,
+    ) -> Result<()> {
+        if object.is_empty() {
+            self.particle_system[index].clear();
+            self.animation_statuses[index] = false;
+            return Ok(());
         }
-        self.particle_system[index] = particles;
-        self.animation_statuses[index] = false;
 
+        let window_size = self.window_size;
+        let pixel_size = self.pixel_size;
+        let num_cpus = num_cpus::get();
+        let chunk_size = (object.len() + num_cpus - 1) / num_cpus;
+        let chunk_size = if chunk_size == 0 { 1 } else { chunk_size }; // Ensure chunk_size >= 1
+
+        // Clone what we need because we'll move them into tasks
+        let frame_clone = frame.clone();
+        let mut tasks = Vec::new();
+
+        for chunk in object.chunks(chunk_size) {
+            let frame_chunk = frame_clone.clone();
+            let chunk_data = chunk.to_vec();
+            let pixel_size = pixel_size;
+            let window_size = window_size;
+            tasks.push(tokio::task::spawn_blocking(move || {
+                let mut particles = Vec::with_capacity(chunk_data.len());
+                for point in chunk_data {
+                    // get_pixel_color can be expensive if done many times, doing this in parallel helps
+                    let color =
+                        ParticleSystem::get_pixel_color_sync(&frame_chunk, &point, pixel_size)?;
+                    particles.push(Particle::new(window_size, point, pixel_size, color));
+                }
+                Ok::<Vec<Particle>, anyhow::Error>(particles)
+            }));
+        }
+
+        // Wait for all tasks to complete and gather results
+        let mut all_particles = Vec::with_capacity(object.len());
+        for t in tasks {
+            let mut partial = t.await??;
+            all_particles.append(&mut partial);
+        }
+
+        self.particle_system[index] = all_particles;
+        self.animation_statuses[index] = false;
         Ok(())
     }
 
