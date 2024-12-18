@@ -147,17 +147,17 @@ async fn main() -> Result<()> {
         // Draw the contours of the objects in the frames
         // frame_processor.draw_contours(&mut particle_system.output_frame)?;
 
-        (point_1, point_2) = frame_processor.find_closest_points(0, 1)?;
+        (point_1, point_2) = frame_processor.find_closest_points(0, 1).await?;
 
         // Draw the closest points in the frames
         if particle_system.get_animation_status(0)? {
-            particle_system.update(point_2)?;
-            object_2 = frame_processor.extract_object(1)?;
+            particle_system.update(point_2).await?;
+            object_2 = frame_processor.extract_object(1).await?;
             particle_system.add_object(&video_source_1.frame, &object_2, 1)?;
         } else {
             // Extract the objects from the frames (black pixels)
-            object_1 = frame_processor.extract_object(0)?;
-            object_2 = frame_processor.extract_object(1)?;
+            object_1 = frame_processor.extract_object(0).await?;
+            object_2 = frame_processor.extract_object(1).await?;
 
             // Add the objects to the particle system
             particle_system.add_object(&video_source_0.frame, &object_1, 0)?;
@@ -180,7 +180,7 @@ async fn main() -> Result<()> {
         }
 
         // Sleep for a short duration to avoid high CPU usage
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::thread::sleep(std::time::Duration::from_millis(1));
     }
     Ok(())
 }
