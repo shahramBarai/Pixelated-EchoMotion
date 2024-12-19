@@ -1,6 +1,6 @@
 ## 1. Abstract
 
-Pixelated EchoMotion is an interactive art project that explores the intersection of human motion, digital representation, and real-time interaction. Inspired by Rafael Lozano-Hemmer's "Body Movies," the project invites participants to dynamically engage with pixelated silhouettes of themselves and others, captured across time and locations. Through video processing, pixel art, and particle-based interaction, the project fosters creativity and connection by transforming human actions into abstract, interactive forms. This report outlines the project's motivation, technical overview, implementation progress, personal learning goals, and future directions.
+Pixelated EchoMotion is an interactive art project that explores the intersection of human motion, digital representation, and real-time interaction. Inspired by Rafael Lozano-Hemmer's "Body Movies," the project invites participants to dynamically engage with pixelated silhouettes of themselves and others, captured across time and locations. Through video processing, pixel art, and particle-based interaction, the project fosters creativity and connection by transforming human actions into abstract, interactive forms.
 
 ## 2. Introduction
 
@@ -69,7 +69,7 @@ The project has been tested in a small scale, with recorded videos and real-time
 
 ## 5. Outcomes
 
-You can find the images and videos of the project in the `media` folder.
+You can find the images and videos of the project in the `report/media` folder.
 
 ## 6. Personal Learning Goals
 
@@ -90,6 +90,7 @@ This project has the potential to evolve into a dynamic and engaging interactive
 - **Interactive Exhibitions**: Showcasing Pixelated EchoMotion in exhibitions or events where participants can engage with the installation in a shared environment.
 - **Collaborative Interactions**: Exploring collaborative interactions between participants, allowing them to create and interact with pixelated silhouettes together.
 - **Dynamic Effects**: Adding more dynamic effects to the particle systems, such as color changes, size variations, and movement patterns.
+- **Performance Optimization**: Optimizing the performance and memory usage of the project to ensure smooth operation and minimal delay in real-time interactions with webcam.
 
 ## 8. Conclusion
 
