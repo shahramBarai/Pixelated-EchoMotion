@@ -12,7 +12,7 @@ Pixelated EchoMotion is an interactive art project exploring the intersection of
 - **Tokio** for concurrency and parallelization
 - **OpenCV** for video processing and silhouette extraction
 
-**Status:**
+## Status:
 This repository contains the code developed as part of the coursework. While some features are still in progress, the code demonstrates the project's core concepts and technical approach, including video capture, pixelization, and basic particle interactions.
 
 For setup instructions, environment configuration, and running the project, please refer to the `report/Deployment.md` file.
