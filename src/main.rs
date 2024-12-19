@@ -20,7 +20,7 @@ use opencv::{
 use std::{fs, path::PathBuf, sync::Arc, time::Duration};
 
 // Define the constants
-const PIXEL_SIZE: i32 = 1; // Define maximum possible pixel size
+const PIXEL_SIZE: i32 = 10; // Define maximum possible pixel size
 const PIXEL_SPACING: i32 = 0; // Define the spacing between pixels
 const WINDOW_NAME: &str = "Window"; // Define the name of the window
 const WINDOW_WIDTH: i32 = 960; // Define the width of the window
@@ -28,8 +28,15 @@ const WINDOW_HEIGHT: i32 = 540; // Define the height of the window
 const VIDEO_RESOLUTION_WIDTH: i32 = 1920; // Define the width of the video resolution
 const VIDEO_RESOLUTION_HEIGHT: i32 = 1080; // Define the height of the video resolution
 const OBJECTS_INTERFERENCE_DISTANCE: i32 = 10; // Define the distance to detect interference
+const WEBCAM_CONTRAST: f64 = 1.0; // Define the video contrast
+const WEBCAM_BRIGHTNESS: f64 = 90.0; // Define the video brightness
 
-fn detect_interference(point_1: Point, point_2: Point, output: &mut Mat) -> Result<bool> {
+fn detect_interference(
+    point_1: Point,
+    point_2: Point,
+    output: &mut Mat,
+    draw: bool,
+) -> Result<bool> {
     if point_1.x == 0 && point_1.y == 0 && point_2.x == 0 && point_2.y == 0 {
         return Ok(false);
     }
@@ -38,46 +45,48 @@ fn detect_interference(point_1: Point, point_2: Point, output: &mut Mat) -> Resu
     let dy = (point_1.y - point_2.y) as f64;
     let distance = (dx * dx + dy * dy).sqrt() as i32;
 
-    // Draw points and a line between the two closest points
-    imgproc::circle(
-        output,
-        point_1,
-        5,
-        core::Scalar::new(0.0, 0.0, 255.0, 0.0),
-        -1,
-        imgproc::LINE_AA,
-        0,
-    )?;
-    imgproc::circle(
-        output,
-        point_2,
-        5,
-        core::Scalar::new(0.0, 0.0, 255.0, 0.0),
-        -1,
-        imgproc::LINE_AA,
-        0,
-    )?;
-
-    if distance < OBJECTS_INTERFERENCE_DISTANCE {
-        imgproc::line(
+    if draw {
+        // Draw points and a line between the two closest points
+        imgproc::circle(
             output,
             point_1,
-            point_2,
+            5,
             core::Scalar::new(0.0, 0.0, 255.0, 0.0),
-            2,
+            -1,
             imgproc::LINE_AA,
             0,
         )?;
-    } else {
-        imgproc::line(
+        imgproc::circle(
             output,
-            point_1,
             point_2,
-            core::Scalar::new(255.0, 0.0, 0.0, 0.0),
-            2,
+            5,
+            core::Scalar::new(0.0, 0.0, 255.0, 0.0),
+            -1,
             imgproc::LINE_AA,
             0,
         )?;
+
+        if distance < OBJECTS_INTERFERENCE_DISTANCE {
+            imgproc::line(
+                output,
+                point_1,
+                point_2,
+                core::Scalar::new(0.0, 0.0, 255.0, 0.0),
+                2,
+                imgproc::LINE_AA,
+                0,
+            )?;
+        } else {
+            imgproc::line(
+                output,
+                point_1,
+                point_2,
+                core::Scalar::new(255.0, 0.0, 0.0, 0.0),
+                2,
+                imgproc::LINE_AA,
+                0,
+            )?;
+        }
     }
 
     Ok(distance < OBJECTS_INTERFERENCE_DISTANCE)
@@ -95,12 +104,13 @@ async fn main() -> Result<()> {
     }
 
     // Initialize the first video source
-    let mut video_source_1 = VideoSource::new()?;
+    let mut video_source_1 = VideoSource::new((VIDEO_RESOLUTION_WIDTH, VIDEO_RESOLUTION_HEIGHT))?;
     if args[1] == "webcam" {
         video_source_1.set_source_webcam(args[2].parse::<i32>()?)?;
+        video_source_1.set_contrast(WEBCAM_CONTRAST);
+        video_source_1.set_brightness(WEBCAM_BRIGHTNESS);
     } else {
         video_source_1.set_source_file(&args[2])?;
-        video_source_1.set_resolution(VIDEO_RESOLUTION_WIDTH, VIDEO_RESOLUTION_HEIGHT)?;
     }
     video_source_1.update_frame()?;
 
@@ -122,7 +132,7 @@ async fn main() -> Result<()> {
     }
 
     // Initialize second video source with the first video in the folder
-    let mut video_source_2 = VideoSource::new()?;
+    let mut video_source_2 = VideoSource::new((VIDEO_RESOLUTION_WIDTH, VIDEO_RESOLUTION_HEIGHT))?;
     let mut current_video_index = 0;
     video_source_2.set_source_file(
         &video_files[current_video_index]
@@ -130,7 +140,6 @@ async fn main() -> Result<()> {
             .unwrap()
             .to_string(),
     )?;
-    video_source_2.set_resolution(VIDEO_RESOLUTION_WIDTH, VIDEO_RESOLUTION_HEIGHT)?;
     video_source_2.update_frame()?;
 
     // Initialize the particle system effect
@@ -167,21 +176,22 @@ async fn main() -> Result<()> {
         }
 
         // Update the second video source frame
-        if !video_source_2.update_frame()? || start_next_video {
-            start_next_video = false; // Reset the flag
+        if !particle_system.get_animation_status(1)? {
+            if !video_source_2.update_frame()? || start_next_video {
+                start_next_video = false; // Reset the flag
 
-            // If the current video ended, move to the next one
-            current_video_index = (current_video_index + 1) % video_files.len();
-            video_source_2.set_source_file(
-                &video_files[current_video_index]
-                    .to_str()
-                    .unwrap()
-                    .to_string(),
-            )?;
-            video_source_2.set_resolution(VIDEO_RESOLUTION_WIDTH, VIDEO_RESOLUTION_HEIGHT)?;
-            if !video_source_2.update_frame()? {
-                // If the new video also fails (shouldn't happen), just continue
-                continue;
+                // If the current video ended, move to the next one
+                current_video_index = (current_video_index + 1) % video_files.len();
+                video_source_2.set_source_file(
+                    &video_files[current_video_index]
+                        .to_str()
+                        .unwrap()
+                        .to_string(),
+                )?;
+                if !video_source_2.update_frame()? {
+                    // If the new video also fails (shouldn't happen), just continue
+                    continue;
+                }
             }
         }
 
@@ -267,7 +277,7 @@ async fn main() -> Result<()> {
                 - closest_points_time
                 - extract_object_time;
 
-            if detect_interference(point_1, point_2, &mut particle_system.output_frame)? {
+            if detect_interference(point_1, point_2, &mut particle_system.output_frame, false)? {
                 particle_system.set_animation_status(1, true);
                 let rundom_number = Rng::gen_range(&mut rand::thread_rng(), 0..3);
                 let effect = match rundom_number {
@@ -327,7 +337,7 @@ async fn main() -> Result<()> {
         }
 
         // Sleep asynchronously to avoid high CPU usage
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::time::sleep(Duration::from_millis(1)).await;
     }
     Ok(())
 }
