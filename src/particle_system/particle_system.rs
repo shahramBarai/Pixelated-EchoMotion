@@ -126,7 +126,7 @@ impl Particle {
         let distance = (dx * dx + dy * dy).sqrt().max(1.0); // Avoid division by zero
 
         // Base force and randomness
-        let base_force = 500.0 / distance;
+        let base_force = 10000.0 / distance;
         let mut rng = rand::thread_rng();
         let random_factor: f64 = rng.gen_range(0.8..1.2); // Random force scaling
         let random_angle: f64 = rng.gen_range(-0.1..0.1); // Random angle variation
