@@ -2,6 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Result};
 use opencv::{
+    core::{self, flip},
+    imgproc,
     prelude::*,
     videoio::{self, VideoCapture},
 };
@@ -9,13 +11,21 @@ use opencv::{
 pub struct VideoSource {
     capture: VideoCapture,
     pub frame: Arc<Mutex<Mat>>,
+    resolution: (i32, i32),
+    source_type: String,
+    constrast: f64,
+    brightness: f64,
 }
 
 impl VideoSource {
-    pub fn new() -> Result<Self> {
+    pub fn new(resolution: (i32, i32)) -> Result<Self> {
         Ok(Self {
             capture: VideoCapture::default()?,
             frame: Arc::new(Mutex::new(Mat::default())),
+            resolution,
+            source_type: String::from(""),
+            constrast: 1.0,
+            brightness: 0.0,
         })
     }
 
@@ -27,6 +37,8 @@ impl VideoSource {
         if !self.capture.is_opened()? {
             bail!("Unable to open video file: {}", file_path);
         }
+
+        self.source_type = "file".to_string();
         Ok(())
     }
 
@@ -35,15 +47,17 @@ impl VideoSource {
         if !self.capture.is_opened()? {
             bail!("Unable to open the webcam!");
         }
+
+        self.source_type = "webcam".to_string();
         Ok(())
     }
 
-    pub fn set_resolution(&mut self, width: i32, height: i32) -> Result<()> {
-        self.capture
-            .set(videoio::CAP_PROP_FRAME_WIDTH, width as f64)?;
-        self.capture
-            .set(videoio::CAP_PROP_FRAME_HEIGHT, height as f64)?;
-        Ok(())
+    pub fn set_contrast(&mut self, contrast: f64) {
+        self.constrast = contrast;
+    }
+
+    pub fn set_brightness(&mut self, brightness: f64) {
+        self.brightness = brightness;
     }
 
     pub fn update_frame(&mut self) -> Result<bool> {
@@ -53,9 +67,33 @@ impl VideoSource {
             return Ok(false);
         }
 
-        // Update the shared frame
-        let mut shared_frame = self.frame.lock().unwrap();
-        *shared_frame = frame;
+        // Resize the frame to the desired resolution
+        let mut resized_frame = Mat::default();
+        imgproc::resize(
+            &frame,
+            &mut resized_frame,
+            core::Size::new(self.resolution.0, self.resolution.1),
+            0.0,
+            0.0,
+            imgproc::INTER_LINEAR,
+        )?;
+
+        if self.source_type == "webcam" {
+            let mut bright_frame = Mat::default();
+            resized_frame.convert_to(&mut bright_frame, -1, self.constrast, self.brightness)?;
+
+            // Flip the frame vertically
+            let mut flipped_frame = Mat::default();
+            flip(&bright_frame, &mut flipped_frame, 1)?;
+
+            // Update the shared frame with the brightened frame
+            let mut shared_frame = self.frame.lock().unwrap();
+            *shared_frame = flipped_frame;
+        } else {
+            // Update the shared frame with the resized frame
+            let mut shared_frame = self.frame.lock().unwrap();
+            *shared_frame = resized_frame;
+        }
 
         Ok(true)
     }
